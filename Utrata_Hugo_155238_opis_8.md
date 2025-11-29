@@ -1,0 +1,3 @@
+Temat 8 – SOR
+
+ponizej beda znajdowac sie informacje o przeprowadzanych symulacjach...
