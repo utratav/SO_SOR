@@ -38,5 +38,43 @@
 #define SIG_EWAKUACJA SIGUSR2
 
 
+//struct dla komunikatow
+
+typedef struct {
+    long mtype;
+
+    pid_t pacjent_pid;
+    int typ_lekarza;
+    int czy_vip;
+
+    //char opis_objawow[50]; --zobacze
+} KomunikatPacjenta;
+
+
+//shm
+
+typedef struct {
+    int liczba_pacjentow_w_srodku;
+    int dlugosc_kolejki_rejestracji;
+    int czy_okienko_2_otwarte;
+
+    int obs_czerwoni;
+    int obs_zolci;
+    int obs_zieloni;
+    
+} StanSOR;
+
+//indeksy dla sem
+
+#define SEM_DOSTEP_PAMIEC 0 //bin
+#define SEM_MIEJSCA_SOR 1 //counter
+
+//semctl
+
+union semun {
+    int val;
+    struct semid_ds *buf;
+    unsigned short *array;
+}
 
 #endif
