@@ -4,6 +4,10 @@
 #include <sys/wait.h>
 #include <stdlib.h>
 
+int semid = -1;
+int shmid = -1;
+int msgid = -1;
+
 
 int main()
 {
@@ -23,6 +27,14 @@ int main()
             perror("blad klucza %d", i);
             exit(1);
         }
+    }
+
+    msgid = msgget(key/key_msg, IPC_CREAT | 0600);
+    if (msgid == -1)
+    {
+        perror("blad msgget");
+        czyszczenie();
+        exit(EXIT_FAILURE)
     }
 
     shmid = shmget(key_shm, sizeof(StanSOR), IPC_CREAT | 0600);
@@ -48,6 +60,36 @@ int main()
     stan->czy_okienko_2_otwarte = 0; //flaga
     shmdt(stan);
 
-    
+    semid = semget(key_sem, 2, IPC_CREAT | 0600);
+    if (semid == -1)
+    {
+        perror("blad semget");
+        czyszczenie();
+        exit(EXIT_FAILURE);
+    }
+
+    union semun arg;
+
+    arg.val; //dla sem kontrolujacego pam. dziel.
+    if(semctl(semid, SEM_DOSTEP_PAMIEC, SETVAL, arg) == -1)
+    {
+        perror("blad inicjalizacji mutexu");
+        czyszczenie();
+        exit(EXIT_FAILURE);
+    }
+
+    arg,val = MAX_PACJENTOW;
+
+    if(semctl(semid, SEM_MIEJSCA_SOR, SETVAL, arg) == -1)
+    {
+        perror("blad inicjalizacji sem sor");
+        czyszczenie();
+        exit(EXIT_FAILURE);
+    }
+
+
+
+
+
 
 }
