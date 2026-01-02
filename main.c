@@ -8,6 +8,40 @@ int semid = -1;
 int shmid = -1;
 int msgid = -1;
 
+void nowy_proces(const char* sciezka, const char * arg0, char * arg1)
+{
+    pid_t = pid = fork();
+
+    if (pid == 0)
+    {
+        execl(sciezka, arg0, arg1, NULL);
+
+        perror("blad execl");
+        exit(EXIT_FAILURE);
+    }
+    else if (pid < 0)
+    {
+        perror("blad forka");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void signal_handler(int sig)
+{
+    if (sig == SIG_EWAKUACJA)
+    {
+        printf("sygnal %d - ewakuacja osrodka\n", sig);
+        kill(0, SIGTERM);
+    }
+    else
+    {
+        printf("otrzymano sygnal zakonczenia \n");
+        kill(0, SIGTERM);
+    }
+    czyszczenie();
+    exit(0);
+}
+
 
 int main()
 {
@@ -78,7 +112,7 @@ int main()
         exit(EXIT_FAILURE);
     }
 
-    arg,val = MAX_PACJENTOW;
+    arg.val = MAX_PACJENTOW;
 
     if(semctl(semid, SEM_MIEJSCA_SOR, SETVAL, arg) == -1)
     {
@@ -86,6 +120,22 @@ int main()
         czyszczenie();
         exit(EXIT_FAILURE);
     }
+
+    nowy_proces("./rejestracja", "rejestracja", NULL);
+
+    nowy_proces("./lekarz", "lekarz_poz", "0");
+
+    nowy_proces("./lekarz", "kardiolog", "1");
+
+    nowy_proces("./lekarz", "neurolog", "2");
+
+    nowy_proces("./lekarz", "generator", NULL);
+
+    while(wait(NULL));
+
+    czyszczenie();
+    return 0;
+
 
 
 
