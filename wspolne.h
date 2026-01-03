@@ -10,20 +10,26 @@
 #include <stdio.h>
 #include <signal.h>
 
-//parametry ftok
+//parametry dla ftok
 
 #define FILE_KEY "."
 
-#define ID_MSG_QUEUE 'Q'
 #define ID_SHM_MEM 'M'
 #define ID_SEM_SET 'S'
 
+#define ID_KOLEJKA_REJESTRACJA 'R'
+#define ID_KOLEJKA_POZ 'T'
+#define ID_KOLEJKA_KARDIOLOG 'K'  
+#define ID_KOLEJKA_NEUROLOG 'N'
 
 #define MAX_PACJENTOW 20 //N
-#define LIMIT_KOLEJKI_K 10 //K-prog otwracia drugiej
+#define LIMIT_KOLEJKI_K 7 //K-prog otwracia drugiej
 
 
 //priorytety dla mtype
+
+#define TYP_VIP
+#define TYP_ZWYKLY
 
 #define CZERWONY 1
 #define ZOLTY 2
@@ -36,6 +42,7 @@
 
 #define SIG_LEKARZ_ODDZIAL SIGUSR1
 #define SIG_EWAKUACJA SIGUSR2
+
 
 
 //struct dla komunikatow
