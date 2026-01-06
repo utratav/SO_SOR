@@ -38,7 +38,7 @@ int main(int argc, char *argv[])
 
     pid_t mpid = getpid();
     int wiek = rand() % 100;
-    int vip = rand() % 100 < 20 //20% szans
+    int vip = rand() % 100 < 20; //20% szans
 
     printf("pacjent %d --- wiek: %d --- vip: %s\n", mpid, wiek, vip ? "tak" : "nie");
 
@@ -90,14 +90,14 @@ int main(int argc, char *argv[])
     msg.czy_vip = vip;
     sprintf(msg.opis_objawow, "objaw");
 
-    if (msgsnd(&msg, sizeof(msg) - sizeof(long), 0) == -1)
+    if (msgsnd(rej_msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1)
     {
         perror("blad wysylania do rejestru");
     }
+   
 
 
-
-    sleep(10); // tutaj pacjent bedzie czekac na lekarza msgrcv()
+    sleep(10); // TYMCZASOWE ROZWIAZANI     E
 
     semop(semid, &mutex_lock, 1);
     stan->liczba_pacjentow_w_srodku--;

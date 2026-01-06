@@ -28,8 +28,8 @@
 
 //priorytety dla mtype
 
-#define TYP_VIP
-#define TYP_ZWYKLY
+#define TYP_VIP 1
+#define TYP_ZWYKLY 2
 
 #define CZERWONY 1
 #define ZOLTY 2
@@ -48,7 +48,7 @@
 //struct dla komunikatow
 
 typedef struct {
-    long mtype;
+    long mtype; //mtype bedzie zmieniac na poszczegolnych etapach cyklu, najpierw vip,zwykly, potem kolor
 
     pid_t pacjent_pid;
     int typ_lekarza;
@@ -83,6 +83,6 @@ union semun {
     int val;
     struct semid_ds *buf;
     unsigned short *array;
-}
+};
 
 #endif
