@@ -8,6 +8,8 @@ int semid = -1;
 int shmid = -1;
 int msgid = -1;
 
+//TO DO CZYSZCZENIE
+
 void nowy_proces(const char* sciezka, const char * arg0, char * arg1)
 {
     pid_t = pid = fork();
@@ -104,7 +106,7 @@ int main()
 
     union semun arg;
 
-    arg.val; //dla sem kontrolujacego pam. dziel.
+    arg.val = 1; //dla sem kontrolujacego pam. dziel.
     if(semctl(semid, SEM_DOSTEP_PAMIEC, SETVAL, arg) == -1)
     {
         perror("blad inicjalizacji mutexu");
@@ -131,15 +133,13 @@ int main()
 
     nowy_proces("./lekarz", "generator", NULL);
 
-    while(wait(NULL));
+    while(wait(NULL) > 0);
 
     czyszczenie();
+
+
+
     return 0;
-
-
-
-
-
 
 
 }

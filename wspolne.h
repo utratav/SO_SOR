@@ -46,8 +46,9 @@ typedef struct {
     pid_t pacjent_pid;
     int typ_lekarza;
     int czy_vip;
+    int wiek;
 
-    //char opis_objawow[50]; --zobacze
+    char opis_objawow[50]; 
 } KomunikatPacjenta;
 
 
