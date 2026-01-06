@@ -52,8 +52,33 @@ void praca_poz(int msgid_poz, int msgid_spec, int ilosc_spec)
         {
             perror("poz - blad wysylania do specjalisty");
         }
-        
 
+
+    }
+}
+
+void praca_specjalista(int msgid_spec, int msgid_wyn)
+{
+    KomunikatPacjenta pacjent;
+
+    while(1)
+    {
+        if(msgrcv(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), -3, 0) == -1)
+        {
+            if (errno != EINTR)
+            {
+                perror("specjalista - blad msgrcv");
+                continue;
+            }
+        }
+
+        pacjent.mtype = pacjent.pacjent_pid;
+
+        if (msgsnd(msgid_wyn, &pacjent, sizeof(pacjent) - sizeof(pacjent), 0) == -1)
+        {
+            perror("specjalista - blad msgsnd");
+            
+        }
     }
 }
 
