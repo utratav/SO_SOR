@@ -37,7 +37,7 @@
 
 #define CZERWONY 1
 #define ZOLTY 2
-#define ZZIELONY 3
+#define ZIELONY 3
 
 
 #define KARDIOLOG 1

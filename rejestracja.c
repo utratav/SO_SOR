@@ -82,7 +82,7 @@ void handle_sig(int sig)
     exit(0);
 }
 
-int main(int argc, char*argv[])
+int main(int argc, char*argv[]) 
 {
 
     signal(SIGTERM, handle_sig);
