@@ -16,13 +16,15 @@ int main(int argc, char *argv[])
 
     key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
     key_t key_msg_rej = ftok(FILE_KEY, ID_KOLEJKA_REJESTRACJA);
+    key_t key_msg_wyn = ftok(FILE_KEY, ID_KOLEJKA_WYNIKI);
     key_t key_shm = ftok(FILE_KEY, ID_SHM_MEM);
 
     int semid = semget(key_sem, 0, 0);
     int rej_msgid = msgget(key_msg_rej, 0);
+    int wynik_id = msgget(key_msg_wyn, 0);
     int shmid = shmget(key_shm, 0, 0);
 
-    if (semid == -1 || rej_msgid == -1 || shmid == -1)
+    if (semid == -1 || rej_msgid == -1 || shmid == -1 || wynik_id == -1)
     {
         perror("blad przy podlaczaniu do ipc");
         exit(EXIT_FAILURE);
@@ -97,7 +99,10 @@ int main(int argc, char *argv[])
    
  
 
-    sleep(10); // TYMCZASOWE ROZWIAZANI     E
+    if (msgrcv(wynik_id, &msg, sizeof(msg) - sizeof(long), mpid, 0) == -1)
+    {
+        perror("blad msgrcv od specjalisty");
+    }
 
     semop(semid, &mutex_lock, 1);
     stan->liczba_pacjentow_w_srodku--;
