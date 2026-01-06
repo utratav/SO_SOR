@@ -17,10 +17,14 @@
 #define ID_SHM_MEM 'M'
 #define ID_SEM_SET 'S'
 
-#define ID_KOLEJKA_REJESTRACJA 'R'
-#define ID_KOLEJKA_POZ 'T'
-#define ID_KOLEJKA_KARDIOLOG 'K'  
+#define ID_KOLEJKA_REJESTRACJA 'R' //pacjent->rejestracja
+#define ID_KOLEJKA_POZ 'T'  //rejestracja ->poz
+
+#define ID_KOLEJKA_KARDIOLOG 'K'  //poz->jeden ze specjalistow
 #define ID_KOLEJKA_NEUROLOG 'N'
+#define ID_KOLEJKA_PEDIATRA 'E'
+
+#define ID_KOLEJKA_WYNIKI 'W'   //jeden ze specjalistow -> pacjent
 
 #define MAX_PACJENTOW 20 //N
 #define LIMIT_KOLEJKI_K 7 //K-prog otwracia drugiej
@@ -55,7 +59,7 @@ typedef struct {
     int czy_vip;
     int wiek;
 
-    char opis_objawow[50]; 
+    char opis_objawow[50];  
 } KomunikatPacjenta;
 
 

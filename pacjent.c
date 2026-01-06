@@ -63,7 +63,7 @@ int main(int argc, char *argv[])
     struct sembuf mutex_unlock;
     mutex_lock.sem_flg = 0;
     mutex_lock.sem_num = SEM_DOSTEP_PAMIEC;
-    mutex_lock.sem_op = 1;
+    mutex_lock.sem_op = 1; 
 
     semop(semid, &mutex_lock, 1);
 
@@ -93,16 +93,16 @@ int main(int argc, char *argv[])
     if (msgsnd(rej_msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1)
     {
         perror("blad wysylania do rejestru");
-    }
+    }  
    
-
+ 
 
     sleep(10); // TYMCZASOWE ROZWIAZANI     E
 
     semop(semid, &mutex_lock, 1);
     stan->liczba_pacjentow_w_srodku--;
     semop(semid, &mutex_unlock, 1);
-    shmdt(stan);
+    
 
     struct sembuf wyjscie_z_poczekalni;
     wyjscie_z_poczekalni.sem_num = SEM_MIEJSCA_SOR; 
@@ -110,6 +110,7 @@ int main(int argc, char *argv[])
     wyjscie_z_poczekalni.sem_flg = 0;
 
     semop(semid, &wyjscie_z_poczekalni, 1);
+    shmdt(stan);
 
     return 0;
 
