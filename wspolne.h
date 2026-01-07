@@ -10,24 +10,34 @@
 #include <stdio.h>
 #include <signal.h>
 
-//parametry ftok
+//parametry dla ftok
 
 #define FILE_KEY "."
 
-#define ID_MSG_QUEUE 'Q'
 #define ID_SHM_MEM 'M'
 #define ID_SEM_SET 'S'
 
+#define ID_KOLEJKA_REJESTRACJA 'R' //pacjent->rejestracja
+#define ID_KOLEJKA_POZ 'T'  //rejestracja ->poz
+
+#define ID_KOLEJKA_KARDIOLOG 'K'  //poz->jeden ze specjalistow
+#define ID_KOLEJKA_NEUROLOG 'N'
+#define ID_KOLEJKA_PEDIATRA 'E'
+
+#define ID_KOLEJKA_WYNIKI 'W'   //jeden ze specjalistow -> pacjent
 
 #define MAX_PACJENTOW 20 //N
-#define LIMIT_KOLEJKI_K 10 //K-prog otwracia drugiej
+#define LIMIT_KOLEJKI_K 7 //K-prog otwracia drugiej
 
 
 //priorytety dla mtype
 
+#define TYP_VIP 1
+#define TYP_ZWYKLY 2
+
 #define CZERWONY 1
 #define ZOLTY 2
-#define ZZIELONY 3
+#define ZIELONY 3
 
 
 #define KARDIOLOG 1
@@ -38,17 +48,18 @@
 #define SIG_EWAKUACJA SIGUSR2
 
 
+
 //struct dla komunikatow
 
 typedef struct {
-    long mtype;
+    long mtype; //mtype bedzie zmieniac na poszczegolnych etapach cyklu, najpierw vip,zwykly, potem kolor
 
     pid_t pacjent_pid;
     int typ_lekarza;
     int czy_vip;
     int wiek;
 
-    char opis_objawow[50]; 
+    char opis_objawow[50];  
 } KomunikatPacjenta;
 
 
@@ -76,6 +87,6 @@ union semun {
     int val;
     struct semid_ds *buf;
     unsigned short *array;
-}
+};
 
 #endif

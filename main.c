@@ -6,13 +6,17 @@
 
 int semid = -1;
 int shmid = -1;
-int msgid = -1;
-
+int msgid_rej = -1;
+int msgid_poz = -1;
+int msgid_neuro = -1;
+int msgid_kardio = -1;
+int msgid_wynik = -1;
+int msgid_ped = -1;
 //TO DO CZYSZCZENIE
 
 void nowy_proces(const char* sciezka, const char * arg0, char * arg1)
 {
-    pid_t = pid = fork();
+    pid_t pid = fork();
 
     if (pid == 0)
     {
@@ -47,30 +51,54 @@ void signal_handler(int sig)
 
 int main()
 {
-    key_t key_msg = ftok(FILE_KEY, ID_MSG_QUEUE);
     key_t key_shm = ftok(FILE_KEY, ID_SHM_MEM);
     key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
 
-    key_t klucze[3];
-    klucze[0] = key_msg;
-    klucze[1] = key_shm;
-    klucze[2] = key_sem;
+    key_t key_msg_rej = ftok(FILE_KEY, ID_KOLEJKA_REJESTRACJA);
+    key_t key_msg_poz = ftok(FILE_KEY, ID_KOLEJKA_POZ);
+    key_t key_msg_kardio = ftok(FILE_KEY, ID_KOLEJKA_KARDIOLOG);
+    key_t key_msg_neuro = ftok(FILE_KEY, ID_KOLEJKA_NEUROLOG);
+    key_t key_msg_wyn = ftok(FILE_KEY, ID_KOLEJKA_WYNIKI);
+    key_t key_msg_ped = ftok(FILE_KEY, ID_KOLEJKA_PEDIATRA);
 
-    for (int i = 0; i < 3; i++)
+    key_t klucze[8];
+
+    klucze[0] = key_shm;
+    klucze[1] = key_sem;
+    klucze[2] = key_msg_rej;
+    klucze[3] = key_msg_poz;
+    klucze[4] = key_msg_kardio;
+    klucze[5] = key_msg_neuro;
+    klucze[6] = key_msg_wyn;
+    klucze[7] = key_msg_ped;
+
+    for (int i = 0; i < 8; i++)
     {
         if (klucze[i] == -1)
         {
-            perror("blad klucza %d", i);
+            perror("blad klucza");
             exit(1);
         }
     }
 
-    msgid = msgget(key/key_msg, IPC_CREAT | 0600);
-    if (msgid == -1)
+    msgid_rej = msgget(msgid_rej, IPC_CREAT | 0600);
+    msgid_poz = msgget(msgid_poz, IPC_CREAT | 0600);
+    msgid_kardio = msgget(msgid_kardio, IPC_CREAT | 0600);
+    msgid_neuro = msgget(msgid_neuro, IPC_CREAT | 0600);
+    msgid_wynik = msgget(key_msg_wyn, IPC_CREAT | 0600);
+    msgid_ped = msgget(key_msg_ped, IPC_CREAT | 0600);
+
+    if (msgid_rej == -1 || msgid_poz == 1)
     {
-        perror("blad msgget");
-        czyszczenie();
-        exit(EXIT_FAILURE)
+        perror("Blad tworzenia kolejek dla rejestracji/poz");
+        exit(1);
+    }
+    
+    
+    if (msgid_kardio == -1 || msgid_neuro == 1)
+    {
+        perror("Blad tworzenia kolejek dla specjalistow"); 
+        exit(1);
     }
 
     shmid = shmget(key_shm, sizeof(StanSOR), IPC_CREAT | 0600);

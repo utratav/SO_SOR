@@ -4,20 +4,27 @@
 #include <time.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/msg.h>
+#include <sys/shm.h>
+#include <sys/sem.h>
 
 
 int main(int argc, char *argv[])
 {
 
+    srand(time(NULL) ^ getpid());
+
     key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
-    key_t key_msg = ftok(FILE_KEY, ID_MSG_QUEUE);
+    key_t key_msg_rej = ftok(FILE_KEY, ID_KOLEJKA_REJESTRACJA);
+    key_t key_msg_wyn = ftok(FILE_KEY, ID_KOLEJKA_WYNIKI);
     key_t key_shm = ftok(FILE_KEY, ID_SHM_MEM);
 
     int semid = semget(key_sem, 0, 0);
-    int msgid = msgget(key_msg, 0);
+    int rej_msgid = msgget(key_msg_rej, 0);
+    int wynik_id = msgget(key_msg_wyn, 0);
     int shmid = shmget(key_shm, 0, 0);
 
-    if (semid == -1 || msgid == -1 || shmid == -1)
+    if (semid == -1 || rej_msgid == -1 || shmid == -1 || wynik_id == -1)
     {
         perror("blad przy podlaczaniu do ipc");
         exit(EXIT_FAILURE);
@@ -33,7 +40,7 @@ int main(int argc, char *argv[])
 
     pid_t mpid = getpid();
     int wiek = rand() % 100;
-    int vip = rand() % 100 < 20 //20% szans
+    int vip = rand() % 100 < 20; //20% szans
 
     printf("pacjent %d --- wiek: %d --- vip: %s\n", mpid, wiek, vip ? "tak" : "nie");
 
@@ -58,46 +65,49 @@ int main(int argc, char *argv[])
     struct sembuf mutex_unlock;
     mutex_lock.sem_flg = 0;
     mutex_lock.sem_num = SEM_DOSTEP_PAMIEC;
-    mutex_lock.sem_op = 1;
+    mutex_lock.sem_op = 1; 
 
     semop(semid, &mutex_lock, 1);
+
     stan->liczba_pacjentow_w_srodku++;
     stan->dlugosc_kolejki_rejestracji++;
+
     int aktualna_kolejka = stan->dlugosc_kolejki_rejestracji;
-    semop(semid, &mutex_unlock, 1);
+    int czy_2_otwarte = stan->czy_okienko_2_otwarte;
 
-    if (aktualna_kolejka > LIMIT_KOLEJKI_K)
+    if (aktualna_kolejka > LIMIT_KOLEJKI_K && czy_2_otwarte == 0)
     {
-        semop(semid, &mutex_lock, 1);
-        if (stan->czy_okienko_2_otwarte == 0)
-        {
-            stan->czy_okienko_2_otwarte = 1;
-
-            //ODPAL DRUGIE OKIENKO()
-        }
-        semop(semid, &mutex_unlock, 1);
+        printf("otwieram drugie okienko rejestracji");
+        stan->czy_okienko_2_otwarte = 1;
     }
 
+    semop(semid, &mutex_unlock, 1);
+    
+
     KomunikatPacjenta msg;
-    msg.mtype = 1;
+    msg.mtype = vip ? 1 : 2;
+    msg.wiek = wiek;
     msg.pacjent_pid = mpid;
 
     msg.czy_vip = vip;
     sprintf(msg.opis_objawow, "objaw");
 
-    if (msgsnd(&msg, sizeof(msg) - sizeof(long), 0) == -1)
+    if (msgsnd(rej_msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1)
     {
         perror("blad wysylania do rejestru");
+    }  
+   
+ 
+
+    if (msgrcv(wynik_id, &msg, sizeof(msg) - sizeof(long), mpid, 0) == -1)
+    {
+        perror("blad msgrcv od specjalisty");
     }
-
-
-
-    sleep(10); // tutaj pacjent bedzie czekac na lekarza msgrcv()
 
     semop(semid, &mutex_lock, 1);
     stan->liczba_pacjentow_w_srodku--;
     semop(semid, &mutex_unlock, 1);
-    shmdt(stan);
+    
 
     struct sembuf wyjscie_z_poczekalni;
     wyjscie_z_poczekalni.sem_num = SEM_MIEJSCA_SOR; 
@@ -105,8 +115,11 @@ int main(int argc, char *argv[])
     wyjscie_z_poczekalni.sem_flg = 0;
 
     semop(semid, &wyjscie_z_poczekalni, 1);
+    shmdt(stan);
 
     return 0;
+
+
 
 
 }
