@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <signal.h>
 
+
+#define FILE_DEST "raport.txt"
 //parametry dla ftok
 
 #define FILE_KEY "."
@@ -19,15 +21,17 @@
 
 #define ID_KOLEJKA_REJESTRACJA 'R' //pacjent->rejestracja
 #define ID_KOLEJKA_POZ 'T'  //rejestracja ->poz
-
-#define ID_KOLEJKA_KARDIOLOG 'K'  //poz->jeden ze specjalistow
-#define ID_KOLEJKA_NEUROLOG 'N'
-#define ID_KOLEJKA_PEDIATRA 'E'
-
 #define ID_KOLEJKA_WYNIKI 'W'   //jeden ze specjalistow -> pacjent
 
+#define ID_KOL_KARDIOLOG   '1'
+#define ID_KOL_NEUROLOG    '2'
+#define ID_KOL_LARYNGOLOG  '3'
+#define ID_KOL_CHIRURG     '4'
+#define ID_KOL_OKULISTA    '5'
+#define ID_KOL_PEDIATRA    '6'
+
 #define MAX_PACJENTOW 20 //N
-#define LIMIT_KOLEJKI_K 7 //K-prog otwracia drugiej
+#define LIMIT_KOLEJKI_K MAX_PACJENTOW / 2//K-prog otwracia drugiej
 
 
 //priorytety dla mtype
@@ -39,13 +43,13 @@
 #define ZOLTY 2
 #define ZIELONY 3
 
-
-#define KARDIOLOG 1
-#define NEUROLOG 2
-#define OKULISTA 3
-
 #define SIG_LEKARZ_ODDZIAL SIGUSR1
 #define SIG_EWAKUACJA SIGUSR2
+
+//indeksy dla sem
+#define SEM_DOSTEP_PAMIEC 0 //bin
+#define SEM_MIEJSCA_SOR 1 //counter
+#define SEM_ZAPIS_PLIK 2 //bin
 
 
 
@@ -58,10 +62,11 @@ typedef struct {
     int typ_lekarza;
     int czy_vip;
     int wiek;
+    char opis_objawow[50];
 
-    char opis_objawow[50];  
+    
+
 } KomunikatPacjenta;
-
 
 //shm
 
@@ -70,16 +75,19 @@ typedef struct {
     int dlugosc_kolejki_rejestracji;
     int czy_okienko_2_otwarte;
 
+    int obs_pacjenci;
+    int obs_spec[7];
     int obs_czerwoni;
     int obs_zolci;
     int obs_zieloni;
+    int obs_dom_poz;
+
+    int ods_dom;
+    int ods_oddzial;
+    int ods_inna
     
 } StanSOR;
 
-//indeksy dla sem
-
-#define SEM_DOSTEP_PAMIEC 0 //bin
-#define SEM_MIEJSCA_SOR 1 //counter
 
 //semctl
 
@@ -89,4 +97,13 @@ union semun {
     unsigned short *array;
 };
 
-#endif
+
+#define LEK_POZ        0
+#define LEK_KARDIOLOG  1
+#define LEK_NEUROLOG   2
+#define LEK_LARYNGOLOG 3
+#define LEK_CHIRURG    4
+#define LEK_OKULISTA   5
+#define LEK_PEDIATRA   6
+
+#endif //koniec
