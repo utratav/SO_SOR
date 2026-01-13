@@ -10,18 +10,42 @@ int msgs_ids[20];
 pid_t pid_lekarze[10];
 //TO DO CZYSZCZENIE
 
-pid_t uruchom_proces(const char* prog, const char* arg1, const char* kom)
+void czyszczenie() 
+{     
+    if (shmid != -1) {
+        if (shmctl(shmid, IPC_RMID, NULL) == -1) perror("Blad usuwania SHM");
+        else zapisz_raport(FILE_DEST, semid, "[main] usunieto pamiec dzielona");;
+    }
+
+    if (semid != -1) {
+        if (semctl(semid, 0, IPC_RMID) == -1) perror("Blad usuwania SEM");
+        else zapisz_raport(FILE_DEST, semid, "[main] usunieto semafory");
+    }
+
+    for (int i = 0; i < 20; i++) {
+        if (msgs_ids[i] != -1) {
+            if (msgctl(msgs_ids[i], IPC_RMID, NULL) == -1) {
+                // Ignorujemy blad jesli kolejka juz nie istnieje
+                if (errno != EINVAL) perror("Blad usuwania kolejki");
+            }
+        }
+    }
+    zapisz_raport(FILE_DEST, semid, "[main] usunieto kolejki komunikatow");
+    zapisz_raport(FILE_DEST, semid, "[main] wykonano czyszczenie");
+}
+
+pid_t uruchom_proces(const char* prog, const char* arg1)
 {
     pid_t pid = fork();
     if (pid == 0)
     {
-        signal(SIGINT, SIG_DFL);
-        printf("tworzenie %s...\n", kom);
-        execl(prog, "proc", arg1, NULL);
+        
+        if(arg1) execl(prog, "proc", arg1, NULL);
+        else execl(prog, "proc", NULL);
+        
         perror("blad execl");
         exit(1);
     }
-
     return pid;
 }
 
@@ -31,10 +55,9 @@ void signal_handler(int sig)
 {
     if (sig == SIGINT) {
        
-        
+        zapisz_raport(FILE_DEST, semid, "[main] otrzymano sygnal ewakuacja...\n");
         kill(0, SIG_EWAKUACJA); 
-        
-        printf("[MAIN] Czekam na zakończenie procesów potomnych...\n");
+        zapisz_raport(FILE_DEST, semid, "[main] zamykam procesy potomne...\n");
         while(wait(NULL) > 0); 
         
         czyszczenie();
@@ -60,7 +83,7 @@ int main()
 
     if (f)
     {
-        fprintf(f, "\trozpoczynam symulacje...\n");
+        fprintf(f, "[main]\trozpoczynam symulacje...\n");
         fclose(f);
     }
 
@@ -81,6 +104,11 @@ int main()
     msg_creat(8, ID_KOL_PEDIATRA);
 
     shmid = shmget(key_shm, sizeof(StanSOR), IPC_CREAT | 0600);
+    if (shmid == (void*)-1)
+    {
+        perror("blad shmat");
+        exit(EXIT_FAILURE);
+    }
 
     StanSOR * stan = (StanSOR*)shmat(shmid, NULL, 0);
 
@@ -94,16 +122,23 @@ int main()
     stan->liczba_pacjentow_w_srodku = 0;
     stan ->dlugosc_kolejki_rejestracji = 0;
     stan->czy_okienko_2_otwarte = 0; //flaga
+    stan->obs_pacjenci = 0;
     shmdt(stan);
 
-    semid = semget(key_sem, 2, IPC_CREAT | 0600);
+    semid = semget(key_sem, 3, IPC_CREAT | 0600);
+    if (semid == -1)
+    {
+        perror("blad semget");
+        czyszczenie();
+        exit(EXIT_FAILURE);
+    }
  
-    union semun arg;
+    union semun arg; 
 
-    arg.val = 1; //dla sem kontrolujacego pam. dziel.
+    arg.val = 1; 
     if(semctl(semid, SEM_DOSTEP_PAMIEC, SETVAL, arg) == -1)
     {
-        perror("blad inicjalizacji mutexu");
+        perror("blad inicjalizacji sem pam dzielona");
         czyszczenie();
         exit(EXIT_FAILURE);
     }
@@ -117,21 +152,28 @@ int main()
         exit(EXIT_FAILURE);
     }
 
-    uruchom_proces("./rejestracja", "1", "REJESTRACJA 1");
-
-    uruchom_proces("./rejestracja", "2", "REJESTRACJA 2");
-
-    uruchom_proces("./lekarz", "0", "LEKARZ POZ");
-
-    char buff[5]; 
-    char buff_opis[50];
-    for(int i=1; i<=6; i++) {
-        sprintf(buff, "%d", i); 
-        sprintf(buff_opis, "specjalista %d", i);
-        pid_lekarze[i] = uruchom("./lekarz", buff, buff_opis);
+    arg.val = 1; 
+    if(semctl(semid, SEM_ZAPIS_PLIK, SETVAL, arg) == -1)
+    {
+        perror("blad inicjalizacji sem zapis do pliku");
+        czyszczenie();
+        exit(EXIT_FAILURE);
     }
 
-    uruchom_proces("./generator", NULL, "GENERATOR");
+    uruchom_proces("./rejestracja", "1");
+
+    uruchom_proces("./rejestracja", "2");
+
+    uruchom_proces("./lekarz", "0");
+
+    char buff[5]; 
+    
+    for(int i=1; i<=6; i++) {
+        sprintf(buff, "%d", i); 
+        pid_lekarze[i] = uruchom_proces("./lekarz", buff);
+    }
+
+    uruchom_proces("./generator", NULL);
     
     int wybor;
     printf("\n\t menu dla uzytkownika\n");
@@ -154,23 +196,17 @@ int main()
         }
         else if (wybor >= 1 && wybor <= 6)
         {
-            pid_t target = pid_lekarze[wybor];
-            kill(target, SIG_LEKARZ_ODDZIAL);
+            if (pid_lekarze[wybor] > 0)
+            {
+                kill(pid_lekarze[wybor], SIG_LEKARZ_ODDZIAL);
+            }
+            
         }
         else
         {
-            printf("niepoprawne uzycie...\n");
+            printf("[main] niepoprawnie uzyty sygnal wezwanie na oddzial\n");
         }
-    }
-   
-
+    }  
     
-
-    
-
-
-
     return 0;
-
-
 }
