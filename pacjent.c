@@ -8,9 +8,22 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 
+int semid = -1;
+
+void handle_sig(sig)
+{
+    if (sig == SIG_EWAKUACJA)
+    {
+        char buf[50];
+        sprintf(buf, "[pacjent %d] ewakuacja", getpid());
+        zapisz_raport(FILE_DEST, semid, buf);
+        exit(0);
+    }
+}
 
 int main(int argc, char *argv[])
 {
+    signal(SIG_EWAKUACJA, handle_sig); 
 
     srand(time(NULL) ^ getpid());
 
@@ -19,7 +32,7 @@ int main(int argc, char *argv[])
     key_t key_msg_wyn = ftok(FILE_KEY, ID_KOLEJKA_WYNIKI);
     key_t key_shm = ftok(FILE_KEY, ID_SHM_MEM);
 
-    int semid = semget(key_sem, 0, 0);
+    semid = semget(key_sem, 0, 0);
     int rej_msgid = msgget(key_msg_rej, 0);
     int wynik_id = msgget(key_msg_wyn, 0);
     int shmid = shmget(key_shm, 0, 0);
@@ -42,7 +55,9 @@ int main(int argc, char *argv[])
     int wiek = rand() % 100;
     int vip = rand() % 100 < 20; //20% szans
 
-    printf("pacjent %d --- wiek: %d --- vip: %s\n", mpid, wiek, vip ? "tak" : "nie");
+    char buf[50];
+    sprintf(buf, "[pacjent] id: %d --- wiek: %d --- vip: %s\n", mpid, wiek, vip ? "tak" : "nie");
+    zapisz_raport(FILE_DEST, semid, buf);
 
     struct sembuf wejscie_do_poczekalni;
     wejscie_do_poczekalni.sem_num = SEM_MIEJSCA_SOR; 
@@ -72,14 +87,7 @@ int main(int argc, char *argv[])
     stan->liczba_pacjentow_w_srodku++;
     stan->dlugosc_kolejki_rejestracji++;
 
-    int aktualna_kolejka = stan->dlugosc_kolejki_rejestracji;
-    int czy_2_otwarte = stan->czy_okienko_2_otwarte;
-
-    if (aktualna_kolejka > LIMIT_KOLEJKI_K && czy_2_otwarte == 0)
-    {
-        printf("otwieram drugie okienko rejestracji");
-        stan->czy_okienko_2_otwarte = 1;
-    }
+      
 
     semop(semid, &mutex_unlock, 1);
     
@@ -90,18 +98,18 @@ int main(int argc, char *argv[])
     msg.pacjent_pid = mpid;
 
     msg.czy_vip = vip;
-    sprintf(msg.opis_objawow, "objaw");
+    
 
     if (msgsnd(rej_msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1)
     {
-        perror("blad wysylania do rejestru");
+        perror("blad wysylania do rejestracji");
     }  
    
  
 
     if (msgrcv(wynik_id, &msg, sizeof(msg) - sizeof(long), mpid, 0) == -1)
     {
-        perror("blad msgrcv od specjalisty");
+        perror("blad msgrcv od poz/spec do pacjenta");
     }
 
     semop(semid, &mutex_lock, 1);

@@ -11,7 +11,7 @@
 #include <string.h>
 int semid = -1;
 int typ_lekarza = 0;    //poz = 0, pozostali specjalisci > 0
-volatile wezwanie_na_oddzial = 0;
+volatile int wezwanie_na_oddzial = 0;
 
 int int_2_msgid(int typ) {
     switch(typ) {
@@ -39,6 +39,15 @@ const char* int_to_lekarz(int typ) {
     }
 }
 
+int int_2_skierowanie(int typ) {
+    switch(typ) {
+        case 1:        return "Pacjent odeslany do domu";
+        case 2:  return "Pacjent skierowany na oddzial";
+        case 3:   return "Pacjent skierowany do innej placowki";
+       default: return -1;
+    }
+}
+
 void handle_sig(int sig)
 {
     if(sig == SIG_LEKARZ_ODDZIAL)
@@ -47,6 +56,7 @@ void handle_sig(int sig)
     }
     else if(sig == SIG_EWAKUACJA)
     {
+        zapisz_raport(FILE_DEST, semid, "[lekarz] sygnal ewakuacja\n");
         exit(0);
     }
 }
@@ -54,9 +64,7 @@ void handle_sig(int sig)
 
 void praca_poz(int msgid_poz, int msgid_wyn, int *msgid_spec)
 {
-    KomunikatPacjenta pacjent;
-
-    
+    KomunikatPacjenta pacjent;   
 
     while(1)
     {
@@ -69,23 +77,41 @@ void praca_poz(int msgid_poz, int msgid_wyn, int *msgid_spec)
             }
         }
 
+        char buf[100];
+        sprintf(buf, "[POZ] wykonuje podstawowe badania na pacjencie %d, nadaje priorytet\n",
+        pacjent.pacjent_pid);
+        zapisz_raport(FILE_DEST, semid, buf);
+
+
         int r = rand() % 100;
         if (r < 5)
         {
             pacjent.mtype = pacjent.pacjent_pid;
-            strcpy(pacjent.opis_objawow, "zdrowy - odeslano do domu po POZ");
+            pacjent.skierowanie = 1;
             msgsnd(msgid_wyn, &pacjent, sizeof(pacjent) - sizeof(long), 0);
             continue;
         }
-        else if (r < 10) pacjent.mtype = CZERWONY;
-        else if (r < 35) pacjent.mtype = ZOLTY;
-        else pacjent.mtype = ZIELONY;
+        else if (r < 10) 
+        {
+            pacjent.mtype = CZERWONY;
+            pacjent.kolor = 1;
+        }
+        else if (r < 35) 
+        {
+            pacjent.mtype = ZOLTY;
+            pacjent.kolor = 2;
+        }
+        else 
+        {
+            pacjent.mtype = ZIELONY;
+            pacjent.kolor = 3;
+        }
 
         int id_specjalisty;
 
         if (pacjent.wiek < 18)
         {
-            id_specjalisty = 1; //zobacz potem
+            id_specjalisty = 6; //zobacz potem
         }
         else
         {
@@ -114,9 +140,13 @@ void praca_specjalista(int typ_lekarza, int msgid_spec, int msgid_wyn)
     {
         if(wezwanie_na_oddzial)
         {
-            printf("lekarz %s wezwany na oddzial...", jaki_lekarz);
+            char buf[100];
+            sprintf(buf, "[%s] wezwanie na oddzial", jaki_lekarz);
+            zapisz_raport(FILE_DEST, semid, buf);
             sleep(5);
-            printf("lekarz %s wrocil na SOR...", jaki_lekarz);
+            char buff[100];
+            sprintf(buff, "[%s] wracam na SOR");
+            zapisz_raport(FILE_DEST, semid, buff);
             wezwanie_na_oddzial = 0;
         }
 
@@ -129,6 +159,20 @@ void praca_specjalista(int typ_lekarza, int msgid_spec, int msgid_wyn)
 
         printf("%s", dialog[typ_lekarza]);
 
+        int r = rand() % 100;
+
+        int skierowanie = 0;
+        if (r < 850) skierowanie = 1; //do domu
+        else if (r < 995) skierowanie = 2; //na oddzial
+        else skierowanie = 3; //do innej placowki
+
+        char buf[100];
+        sprintf(buf, "[%s] %s %s\n", 
+            jaki_lekarz, dialog[typ_lekarza], int_2_skierowanie(skierowanie));
+        zapisz_raport(FILE_DEST, semid, buf);
+
+        pacjent.skierowanie = skierowanie;
+
         pacjent.mtype = pacjent.pacjent_pid;
 
         if (msgsnd(msgid_wyn, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
@@ -140,12 +184,12 @@ void praca_specjalista(int typ_lekarza, int msgid_spec, int msgid_wyn)
 }
 
 const char* dialog[6] = {
-    "kardiolog: pobieram probke krwi...",
-    "neurolog: podpinam diody do mozgu...",
-    "laryngolog: badam uszy...",
-    "pediatra: pediatra cos tam robi",
-    "okulista: badam oczy...",
-    "chirurg: przeprowadzam operacje"
+    "pobieram probke krwi...",
+    "podpinam diody do mozgu...",
+    "badam uszy...",
+    "badam malego pacjenta",
+    "badam oczy...",
+    "przeprowadzam operacje"
 };
                                                        
 
@@ -171,6 +215,7 @@ int main(int argc, char*argv[])
 
     int msgid_poz = msgget(ftok(FILE_KEY, ID_KOLEJKA_POZ), 0);
     int msgid_wyn = msgget(ftok(FILE_KEY, ID_KOLEJKA_WYNIKI), 0);
+    semid = semget(ftok(FILE_KEY, ID_SEM_SET), 0, 0); 
 
 
     
@@ -186,9 +231,7 @@ int main(int argc, char*argv[])
             exit(1);
         }
     }
- 
-
-    
+   
 
     if (typ_lekarza == 0)
     {

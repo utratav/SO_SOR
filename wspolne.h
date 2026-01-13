@@ -9,9 +9,15 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <signal.h>
+#include <time.h>
 
+#define FILE_DEST RAPORT_1
 
-#define FILE_DEST "raport.txt"
+#define RAPORT_1 "raport1.txt"
+#define RAPORT_2 "raport2.txt"
+#define RAPORT_3 "raport3.txt"
+#define RAPORT_4 "raport4.txt"
+
 //parametry dla ftok
 
 #define FILE_KEY "."
@@ -31,7 +37,7 @@
 #define ID_KOL_PEDIATRA    '6'
 
 #define MAX_PACJENTOW 20 //N
-#define LIMIT_KOLEJKI_K MAX_PACJENTOW / 2//K-prog otwracia drugiej
+#define LIMIT_KOLEJKI_K (MAX_PACJENTOW / 2) //K-prog otwracia drugiej
 
 
 //priorytety dla mtype
@@ -62,7 +68,8 @@ typedef struct {
     int typ_lekarza;
     int czy_vip;
     int wiek;
-    char opis_objawow[50];
+    int kolor;
+    int skierowanie;
 
     
 
@@ -76,15 +83,13 @@ typedef struct {
     int czy_okienko_2_otwarte;
 
     int obs_pacjenci;
-    int obs_spec[7];
+    int obs_spec[7]; 
     int obs_czerwoni;
     int obs_zolci;
     int obs_zieloni;
     int obs_dom_poz;
 
-    int ods_dom;
-    int ods_oddzial;
-    int ods_inna
+    int decyzja[3];
     
 } StanSOR;
 
@@ -106,4 +111,60 @@ union semun {
 #define LEK_OKULISTA   5
 #define LEK_PEDIATRA   6
 
-#endif //koniec
+static void zapisz_raport(const char* nazwa_pliku, int semid, const char* tresc)
+ {
+    
+    struct sembuf lock;
+    lock.sem_flg = 0;
+    lock.sem_num = SEM_ZAPIS_PLIK;
+    lock.sem_op = -1;
+
+    struct sembuf unlock;
+    unlock.sem_flg = 0;
+    unlock.sem_num = SEM_ZAPIS_PLIK;
+    unlock.sem_op = 1;
+    
+    if (semid != -1) semop(semid, &lock, 1); 
+
+    FILE *f = fopen(nazwa_pliku, "a"); 
+    if (f != NULL) {
+        fprintf(f, "%s\n", tresc); 
+        fclose(f);
+    } else {
+        perror("Blad otwarcia pliku raportu");
+    }
+
+    if (semid != -1) semop(semid, &unlock, 1); 
+}
+
+static void zapisz_czas(const char* nazwa_pliku, int semid) 
+{
+    
+    
+    time_t czas_surowy;
+    struct tm *czas_info;
+    char bufor_czasu[80];
+
+    time(&czas_surowy);
+    czas_info = localtime(&czas_surowy);
+    // Formatowanie daty: Godzina:Minuta:Sekunda
+    strftime(bufor_czasu, 80, "%H:%M:%S", czas_info);
+
+    struct sembuf lock = {SEM_ZAPIS_PLIK, -1, 0};
+    struct sembuf unlock = {SEM_ZAPIS_PLIK, 1, 0};
+    
+    if (semid != -1) semop(semid, &lock, 1);
+
+    FILE *f = fopen(nazwa_pliku, "a");
+    if (f != NULL) {
+        
+        fprintf(f, "-----------------------\n");
+        fprintf(f, "[%s] %s\n", bufor_czasu);
+        fprintf(f, "-----------------------\n");
+        fclose(f);
+    }
+
+    if (semid != -1) semop(semid, &unlock, 1);
+}
+
+#endif //koniec 
