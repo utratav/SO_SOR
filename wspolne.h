@@ -18,6 +18,8 @@
 #define RAPORT_3 "raport3.txt"
 #define RAPORT_4 "raport4.txt"
 
+#define MAX_PROCESOW 100
+
 //parametry dla ftok
 
 #define FILE_KEY "."
@@ -56,6 +58,7 @@
 #define SEM_DOSTEP_PAMIEC 0 //bin
 #define SEM_MIEJSCA_SOR 1 //counter
 #define SEM_ZAPIS_PLIK 2 //bin
+#define SEM_GENERATOR 3
 
 
 
@@ -115,12 +118,12 @@ static void zapisz_raport(const char* nazwa_pliku, int semid, const char* tresc)
  {
     
     struct sembuf lock;
-    lock.sem_flg = 0;
+    lock.sem_flg = SEM_UNDO;
     lock.sem_num = SEM_ZAPIS_PLIK;
     lock.sem_op = -1;
 
     struct sembuf unlock;
-    unlock.sem_flg = 0;
+    unlock.sem_flg = SEM_UNDO;
     unlock.sem_num = SEM_ZAPIS_PLIK;
     unlock.sem_op = 1;
     
@@ -137,34 +140,5 @@ static void zapisz_raport(const char* nazwa_pliku, int semid, const char* tresc)
     if (semid != -1) semop(semid, &unlock, 1); 
 }
 
-static void zapisz_czas(const char* nazwa_pliku, int semid) 
-{
-    
-    
-    time_t czas_surowy;
-    struct tm *czas_info;
-    char bufor_czasu[80];
-
-    time(&czas_surowy);
-    czas_info = localtime(&czas_surowy);
-    // Formatowanie daty: Godzina:Minuta:Sekunda
-    strftime(bufor_czasu, 80, "%H:%M:%S", czas_info);
-
-    struct sembuf lock = {SEM_ZAPIS_PLIK, -1, 0};
-    struct sembuf unlock = {SEM_ZAPIS_PLIK, 1, 0};
-    
-    if (semid != -1) semop(semid, &lock, 1);
-
-    FILE *f = fopen(nazwa_pliku, "a");
-    if (f != NULL) {
-        
-        fprintf(f, "-----------------------\n");
-        fprintf(f, "[%s] %s\n", bufor_czasu);
-        fprintf(f, "-----------------------\n");
-        fclose(f);
-    }
-
-    if (semid != -1) semop(semid, &unlock, 1);
-}
 
 #endif //koniec 

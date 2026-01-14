@@ -44,12 +44,12 @@ int main(int argc, char*argv[])
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
 
     struct sembuf lock;
-    lock.sem_flg = 0;
+    lock.sem_flg = SEM_UNDO;
     lock.sem_num = SEM_DOSTEP_PAMIEC;
     lock.sem_op = -1;
 
     struct sembuf unlock;
-    unlock.sem_flg = 0;
+    unlock.sem_flg = SEM_UNDO;
     unlock.sem_num = SEM_DOSTEP_PAMIEC;
     unlock.sem_op = 1;
 

@@ -62,7 +62,7 @@ int main(int argc, char *argv[])
     struct sembuf wejscie_do_poczekalni;
     wejscie_do_poczekalni.sem_num = SEM_MIEJSCA_SOR; 
     wejscie_do_poczekalni.sem_op = -1;
-    wejscie_do_poczekalni.sem_flg = 0;
+    wejscie_do_poczekalni.sem_flg = SEM_UNDO;
 
 
     if (semop(semid, &wejscie_do_poczekalni, 1) == -1)
@@ -72,13 +72,13 @@ int main(int argc, char *argv[])
     }
 
     struct sembuf mutex_lock;
-    mutex_lock.sem_flg = 0;
+    mutex_lock.sem_flg = SEM_UNDO;
     mutex_lock.sem_num = SEM_DOSTEP_PAMIEC;
     mutex_lock.sem_op = -1;
 
 
     struct sembuf mutex_unlock;
-    mutex_lock.sem_flg = 0;
+    mutex_lock.sem_flg = SEM_UNDO;
     mutex_lock.sem_num = SEM_DOSTEP_PAMIEC;
     mutex_lock.sem_op = 1; 
 
@@ -120,7 +120,7 @@ int main(int argc, char *argv[])
     struct sembuf wyjscie_z_poczekalni;
     wyjscie_z_poczekalni.sem_num = SEM_MIEJSCA_SOR; 
     wyjscie_z_poczekalni.sem_op = 1;
-    wyjscie_z_poczekalni.sem_flg = 0;
+    wyjscie_z_poczekalni.sem_flg = SEM_UNDO;
 
     semop(semid, &wyjscie_z_poczekalni, 1);
     shmdt(stan);

@@ -125,7 +125,7 @@ int main()
     stan->obs_pacjenci = 0;
     shmdt(stan);
 
-    semid = semget(key_sem, 3, IPC_CREAT | 0600);
+    semid = semget(key_sem, 4, IPC_CREAT | 0600);
     if (semid == -1)
     {
         perror("blad semget");
@@ -160,6 +160,16 @@ int main()
         exit(EXIT_FAILURE);
     }
 
+    arg.val = MAX_PROCESOW;
+    if(semctl(semid, SEM_GENERATOR, SETVAL, arg) == -1)
+    {
+        perror("blad inicjalizacji sem generacja procesow pacjent");
+        czyszczenie();
+        exit(EXIT_FAILURE);
+    }
+
+
+
     uruchom_proces("./rejestracja", "1");
 
     uruchom_proces("./rejestracja", "2");
@@ -184,7 +194,7 @@ int main()
     while(1)
     {
         printf("> ");
-        if (scanf("%d", &wybor) != 1)
+        if (scanf("%d", &wybor) != -1)
         {
             while(getchar() != '\n');
             continue;
@@ -192,7 +202,8 @@ int main()
 
         if (wybor == 0)
         {
-            raise(SIGINT);
+            kill(0, SIGINT);
+            break;
         }
         else if (wybor >= 1 && wybor <= 6)
         {
