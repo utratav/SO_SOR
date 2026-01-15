@@ -18,7 +18,10 @@
 #define RAPORT_3 "raport3.txt"
 #define RAPORT_4 "raport4.txt"
 
-#define MAX_PROCESOW 100
+#define MAX_PROCESOW 10
+
+#define MAX_PACJENTOW 5 //N
+#define LIMIT_KOLEJKI_K (MAX_PACJENTOW / 2) //K-prog otwracia drugiej
 
 //parametry dla ftok
 
@@ -38,8 +41,7 @@
 #define ID_KOL_OKULISTA    '5'
 #define ID_KOL_PEDIATRA    '6'
 
-#define MAX_PACJENTOW 20 //N
-#define LIMIT_KOLEJKI_K (MAX_PACJENTOW / 2) //K-prog otwracia drugiej
+
 
 
 //priorytety dla mtype
