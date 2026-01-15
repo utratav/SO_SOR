@@ -82,8 +82,9 @@ int main(int argc, char*argv[])
             semop(semid, &unlock, 1);
 
             
-            if (!otwarte) {
-                usleep(200000); // 0.2 sekundy
+            if (!otwarte) 
+            {
+                //usleep(200000); // 0.2 sekundy
                 continue;
             }
         }
@@ -98,7 +99,7 @@ int main(int argc, char*argv[])
         {
             if (errno == ENOMSG && nr_okienka == 2) {
                 
-                usleep(100000);
+                //usleep(100000);
                 continue;
             }
             if (errno != EINTR) perror("rejestracja - blad msgrcv");
@@ -108,7 +109,7 @@ int main(int argc, char*argv[])
 
         
 
-        usleep(500000);  
+        //usleep(500000);  
 
         semop(semid, &lock, 1);
         stan->dlugosc_kolejki_rejestracji--;

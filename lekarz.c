@@ -121,7 +121,7 @@ void praca_poz(int msgid_poz, int msgid_wyn)
         int r_dom = rand() % 100;
         if (r_dom < 5)
         {
-            pacjent.typ_lekarza = -1;
+            pacjent.typ_lekarza = 0;
             pacjent.skierowanie = 1;  
             
             char buf_dom[100];
@@ -153,7 +153,9 @@ void praca_specjalista(int typ_lekarza, int msgid_spec, int msgid_wyn)
             char buf[100];
             sprintf(buf, "[SIGNAL 2 %s] wezwanie na oddzial\n", jaki_lekarz);
             zapisz_raport(FILE_DEST, semid, buf);
-            sleep(5);
+
+            sleep(10); //NIE USUWAJ
+
             char buff[100];
             sprintf(buff, "[SIGNAL 2 %s] wracam na SOR\n", jaki_lekarz);
             zapisz_raport(FILE_DEST, semid, buff);

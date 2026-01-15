@@ -173,6 +173,18 @@ int main(int argc, char *argv[])
 
     semop(semid, &mutex_lock, 1);
     stan->liczba_pacjentow_w_srodku--;
+    stan->obs_pacjenci++;
+    stan->obs_kolory[msg.kolor]++;
+    if (!(msg.typ_lekarza))
+    {
+        stan->obs_dom_poz++;
+        stan->decyzja[msg.skierowanie]++;
+    } 
+    else
+    {
+        stan->obs_spec[msg.typ_lekarza]++;
+        stan->decyzja[msg.skierowanie]++;
+    }
     semop(semid, &mutex_unlock, 1);
     
 

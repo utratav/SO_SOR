@@ -13,6 +13,15 @@ pid_t pid_lekarze[10];
 void czyszczenie() 
 {     
     if (shmid != -1) {
+        StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
+        if (stan != (void*)-1) 
+        {
+            podsumowanie(stan);
+            shmdt(stan);
+        }
+    }
+
+    if (shmid != -1) {
         if (shmctl(shmid, IPC_RMID, NULL) == -1) perror("Blad usuwania SHM");
         else zapisz_raport(FILE_DEST, semid, "[main] usunieto pamiec dzielona");;
     }
@@ -120,10 +129,15 @@ int main()
     }
 
     stan->liczba_pacjentow_w_srodku = 0;
-    stan ->dlugosc_kolejki_rejestracji = 0;
-    stan->czy_okienko_2_otwarte = 0; //flaga
+    stan->dlugosc_kolejki_rejestracji = 0;
+    stan->czy_okienko_2_otwarte = 0;
     stan->obs_pacjenci = 0;
-    shmdt(stan);
+    stan->obs_dom_poz = 0;
+
+    for(int i=0; i<7; i++) stan->obs_spec[i] = 0;
+    for(int i=0; i<4; i++) stan->obs_kolory[i] = 0;
+    for(int i=0; i<4; i++) stan->decyzja[i] = 0; 
+    shmdt(stan); 
 
     semid = semget(key_sem, 4, IPC_CREAT | 0600);
     if (semid == -1)
@@ -133,7 +147,7 @@ int main()
         exit(EXIT_FAILURE);
     }
  
-    union semun arg; 
+    union semun arg;  
 
     arg.val = 1; 
     if(semctl(semid, SEM_DOSTEP_PAMIEC, SETVAL, arg) == -1)

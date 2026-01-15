@@ -91,7 +91,7 @@ int main(int argc, char* argv[])
 
         //ile--;
 
-        sleep(1); 
+        //sleep(1); 
         
     }
 

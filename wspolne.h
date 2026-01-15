@@ -18,10 +18,11 @@
 #define RAPORT_3 "raport3.txt"
 #define RAPORT_4 "raport4.txt"
 
-#define MAX_PROCESOW 20
+#define MAX_PROCESOW 100
 
-#define MAX_PACJENTOW  10//N
+#define MAX_PACJENTOW  80//N
 #define LIMIT_KOLEJKI_K (MAX_PACJENTOW / 2) //K-prog otwracia drugiej
+#define ZAMKNIECIE_KOLEJKI (MAX_PACJENTOW / 3)  
 
 //parametry dla ftok
 
@@ -89,9 +90,7 @@ typedef struct {
 
     int obs_pacjenci;
     int obs_spec[7]; 
-    int obs_czerwoni;
-    int obs_zolci;
-    int obs_zieloni;
+    int obs_kolory[4];
     int obs_dom_poz;
 
     int decyzja[3];
@@ -142,5 +141,33 @@ static void zapisz_raport(const char* nazwa_pliku, int semid, const char* tresc)
     if (semid != -1) semop(semid, &unlock, 1); 
 }
 
+static void podsumowanie(StanSOR *stan)
+{
+    printf("\n-----------------\n");
+    printf("\tpodsumowanie symulacji\n\n");
+
+    printf("obsluzeni pacjenci: %d\n\n", stan->obs_pacjenci);
+    printf("pacjenci odeslani do domu bezposrednio po POZ: %d\n", stan->obs_dom_poz);
+
+    printf("\n\tnadane priorytety\n");
+    printf("czerwony: %d razy\n", stan->obs_kolory[CZERWONY]);
+    printf("zolty: %d razy\n", stan->obs_kolory[ZOLTY]);
+    printf("zielony: %d razy\n", stan->obs_kolory[ZIELONY]);
+
+    printf("\n\tobsluzeni specjalisci\n");
+    const char* nazwy_spec[] = {"", "Kardiolog", "Neurolog", "Laryngolog", "Chirurg", "Okulista", "Pediatra"};
+    for(int i = 1; i <= 6; i++) {
+        printf("%s: %d pacjentow\n", nazwy_spec[i], stan->obs_spec[i]);
+    }
+
+    printf("\n\tskierowanie dalej\n");
+    printf("odeslani do domu: %d\n", stan->decyzja[1]);
+    printf("skierowani na oddzial: %d\n", stan->decyzja[2]);
+    printf("do innej placowki: %d\n", stan->decyzja[3]);
+
+    printf("-----------------\n");
+
+
+}
 
 #endif //koniec 
