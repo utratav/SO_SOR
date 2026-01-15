@@ -1,4 +1,9 @@
 *.txt
+main
+rejestracja
+lekarz
+pacjent
+generator
 
 # Prerequisites
 *.d

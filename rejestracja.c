@@ -97,7 +97,7 @@ int main(int argc, char*argv[])
         if (status == -1)
         {
             if (errno == ENOMSG && nr_okienka == 2) {
-                // Brak wiadomości, okienko 2 może sprawdzić czy się zamknąć
+                
                 usleep(100000);
                 continue;
             }
