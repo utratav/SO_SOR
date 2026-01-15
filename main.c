@@ -79,7 +79,7 @@ int main()
     signal(SIGINT, signal_handler);
     signal(SIG_EWAKUACJA, SIG_IGN);
 
-    FILE *f = fopen(FILE_DEST, 'w');
+    FILE *f = fopen(FILE_DEST, "w");
 
     if (f)
     {
@@ -104,7 +104,7 @@ int main()
     msg_creat(8, ID_KOL_PEDIATRA);
 
     shmid = shmget(key_shm, sizeof(StanSOR), IPC_CREAT | 0600);
-    if (shmid == (void*)-1)
+    if (shmid == -1)
     {
         perror("blad shmat");
         exit(EXIT_FAILURE);
@@ -115,7 +115,7 @@ int main()
     if (stan == (void*)-1)
     {
         perror("blad shmat");
-        czysczenie();
+        czyszczenie();
         exit(EXIT_FAILURE);
     }
 
@@ -189,12 +189,12 @@ int main()
     printf("\n\t menu dla uzytkownika\n");
     printf("0 - ewakuacja sor. analogicznie uzyj CTRL + C\n");
     printf("pozostale opcje: wezwij lekarza na oddzial:\n");
-    printf("1 - pediatra\n2 - kardiolog\n3 - neurolog\n4 - okulista\n5 - laryngolog\n6 - chirurg");
+    printf("1 - pediatra\n2 - kardiolog\n3 - neurolog\n4 - okulista\n5 - laryngolog\n6 - chirurg\n\n");
 
     while(1)
     {
         printf("> ");
-        if (scanf("%d", &wybor) != -1)
+        if (scanf("%d", &wybor) != 1)
         {
             while(getchar() != '\n');
             continue;

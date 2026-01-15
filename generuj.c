@@ -38,7 +38,8 @@ void handle_sigint(int sig)
 }
 
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) 
+{
     srand(time(NULL) ^ getpid());
 
     key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
@@ -49,6 +50,7 @@ int main(int argc, char* argv[]) {
         exit(1);
     }
 
+    
     struct sigaction sa;
     sa.sa_handler = handle_sigchld;
     sigemptyset(&sa.sa_mask);
@@ -57,10 +59,11 @@ int main(int argc, char* argv[]) {
 
     signal(SIGINT, handle_sigint);
 
-    printf("Generator: startuje (limit sterowany semaforem)\n");
+    zapisz_raport(FILE_DEST, semid, "[generator] start\n");
 
     struct sembuf zajmij = {SEM_GENERATOR, -1, 0};
 
+    //int ile = 3;
     while(petla)    
     {
         if (semop(semid, &zajmij, 1) == -1) 
@@ -83,13 +86,17 @@ int main(int argc, char* argv[]) {
             perror("generator: fork failed");
             struct sembuf oddaj = {SEM_GENERATOR, 1, 0};
             semop(semid, &oddaj, 1);
-            sleep(1); 
+            
         }
+
+        //ile--;
+
+        sleep(1); 
         
     }
 
 
 
-    printf("Generator: kończenie pracy.\n");
+    zapisz_raport(FILE_DEST, semid, "[generator] koniec pracy\n");
     return 0;
 }

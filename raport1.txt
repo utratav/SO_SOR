@@ -1,0 +1,80 @@
+[main]	rozpoczynam symulacje...
+[generator] start
+
+[pacjent] id: 1573520 --- wiek: 76 --- vip: nie
+
+[rejestracja] okienko 1: pacjent 1573520 przekazany do POZ
+
+[POZ] wykonuje podstawowe badania na pacjencie 1573520, nadaje priorytet
+
+[Neurolog] podpinam diody do mozgu... Pacjent odeslany do domu
+
+[pacjent] id: 1573521 --- wiek: 32 --- vip: tak
+
+[rejestracja] okienko 1: pacjent 1573521 przekazany do POZ
+
+[POZ] wykonuje podstawowe badania na pacjencie 1573521, nadaje priorytet
+
+[Chirurg] przeprowadzam operacje... Pacjent odeslany do domu
+
+[pacjent] id: 1573526 --- wiek: 62 --- vip: nie
+
+[rejestracja] okienko 1: pacjent 1573526 przekazany do POZ
+
+[POZ] wykonuje podstawowe badania na pacjencie 1573526, nadaje priorytet
+
+[Laryngolog] badam uszy... Pacjent odeslany do domu
+
+[pacjent] id: 1573545 --- wiek: 67 --- vip: tak
+
+[rejestracja] okienko 1: pacjent 1573545 przekazany do POZ
+
+[POZ] wykonuje podstawowe badania na pacjencie 1573545, nadaje priorytet
+
+[Laryngolog] badam uszy... Pacjent skierowany na oddzial
+
+[pacjent] id: 1573546 --- wiek: 35 --- vip: nie
+
+[rejestracja] okienko 1: pacjent 1573546 przekazany do POZ
+
+[POZ] wykonuje podstawowe badania na pacjencie 1573546, nadaje priorytet
+
+[Okulista] badam oczy... Pacjent odeslany do domu
+
+[pacjent] id: 1573572 --- wiek: 73 --- vip: nie
+
+[SIGNAL 2] wezwanie na oddzial Chirurg
+[rejestracja] okienko 1: pacjent 1573572 przekazany do POZ
+
+[POZ] wykonuje podstawowe badania na pacjencie 1573572, nadaje priorytet
+
+[Kardiolog] pobieram probke krwi... Pacjent odeslany do domu
+
+[pacjent] id: 1573573 --- wiek: 73 --- vip: nie
+
+[rejestracja] okienko 1: pacjent 1573573 przekazany do POZ
+
+[POZ] wykonuje podstawowe badania na pacjencie 1573573, nadaje priorytet
+
+[Neurolog] podpinam diody do mozgu... Pacjent skierowany na oddzial
+
+[pacjent] id: 1573576 --- wiek: 51 --- vip: tak
+
+[rejestracja] okienko 1: pacjent 1573576 przekazany do POZ
+
+[POZ] wykonuje podstawowe badania na pacjencie 1573576, nadaje priorytet
+
+[Laryngolog] badam uszy... Pacjent odeslany do domu
+
+[pacjent] id: 1573577 --- wiek: 80 --- vip: nie
+
+[main] otrzymano sygnal ewakuacja...
+
+[generator] koniec pracy
+
+[main] zamykam procesy potomne...
+
+[main] usunieto pamiec dzielona
+[main] usunieto semafory
+[main] usunieto kolejki komunikatow
+[main] wykonano czyszczenie
