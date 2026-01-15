@@ -35,7 +35,7 @@ int main(int argc, char*argv[])
     semid = semget(ftok(FILE_KEY, ID_SEM_SET), 0, 0);
     
     int msgid_we = msgget(ftok(FILE_KEY, ID_KOLEJKA_REJESTRACJA), 0);
-    int msgid_wy = msgget(ftok(FILE_KEY, ID_KOLEJKA_POZ), 0);
+    int msgid_wy = msgget(ftok(FILE_KEY, ID_KOLEJKA_WYNIKI), 0);
 
     if (shmid == -1 || semid == -1 || msgid_we == -1 || msgid_wy == -1) {
         perror("rejestracja - Błąd połączenia IPC"); exit(1);
@@ -113,8 +113,7 @@ int main(int argc, char*argv[])
         stan->dlugosc_kolejki_rejestracji--;
         semop(semid, &unlock, 1);
 
-        pacjent.mtype = 1; //nie jestem tego pewien zobacz pozniej
-
+        pacjent.mtype = pacjent.pacjent_pid; 
         if(msgsnd(msgid_wy, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
         {
             perror("rejestracja - blad przekazania do POZ");
@@ -126,10 +125,7 @@ int main(int argc, char*argv[])
                  nr_okienka, pacjent.pacjent_pid);
             zapisz_raport(FILE_DEST, semid, buf);
 
-        }
-
-
-        
+        }        
 
     }
     

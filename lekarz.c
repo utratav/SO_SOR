@@ -41,9 +41,9 @@ const char* int_to_lekarz(int typ) {
 
 int int_2_skierowanie(int typ) {
     switch(typ) {
-        case 1:        return "Pacjent odeslany do domu";
-        case 2:  return "Pacjent skierowany na oddzial";
-        case 3:   return "Pacjent skierowany do innej placowki";
+        case 1: return "Pacjent odeslany do domu";
+        case 2: return "Pacjent skierowany na oddzial";
+        case 3: return "Pacjent skierowany do innej placowki";
        default: return -1;
     }
 }
@@ -62,7 +62,7 @@ void handle_sig(int sig)
 }
 
 
-void praca_poz(int msgid_poz, int msgid_wyn, int *msgid_spec)
+void praca_poz(int msgid_poz, int msgid_wyn)
 {
     KomunikatPacjenta pacjent;   
 
@@ -75,7 +75,7 @@ void praca_poz(int msgid_poz, int msgid_wyn, int *msgid_spec)
                 perror("poz - blad msgrcv");
                 continue;
             }
-        }
+        } 
 
         char buf[100];
         sprintf(buf, "[POZ] wykonuje podstawowe badania na pacjencie %d, nadaje priorytet\n",
@@ -83,45 +83,45 @@ void praca_poz(int msgid_poz, int msgid_wyn, int *msgid_spec)
         zapisz_raport(FILE_DEST, semid, buf);
 
 
-        int r = rand() % 100;
-        if (r < 5)
+       int r = rand() % 100;
+        if (r < 10) 
         {
-            pacjent.mtype = pacjent.pacjent_pid;
-            pacjent.skierowanie = 1;
-            msgsnd(msgid_wyn, &pacjent, sizeof(pacjent) - sizeof(long), 0);
-            continue;
+            pacjent.kolor = CZERWONY;
         }
-        else if (r < 10) 
+        else if (r < 45) // 10 + 35 = 45
         {
-            pacjent.mtype = CZERWONY;
-            pacjent.kolor = 1;
-        }
-        else if (r < 35) 
-        {
-            pacjent.mtype = ZOLTY;
-            pacjent.kolor = 2;
+            pacjent.kolor = ZOLTY;
         }
         else 
         {
-            pacjent.mtype = ZIELONY;
-            pacjent.kolor = 3;
+            pacjent.kolor = ZIELONY;
         }
 
         int id_specjalisty;
-
         if (pacjent.wiek < 18)
         {
-            id_specjalisty = 6; //zobacz potem
+            id_specjalisty = LEK_PEDIATRA; 
         }
         else
         {
-            id_specjalisty = rand() % 6 + 1; //nie moze byc zero 
+            id_specjalisty = (rand() % 5) + 1; 
         }
-
         pacjent.typ_lekarza = id_specjalisty;
 
+        int r_dom = rand() % 100;
+        if (r_dom < 5)
+        {
+            pacjent.typ_lekarza = -1;
+            pacjent.skierowanie = 1;  
+            
+            char buf_dom[100];
+            sprintf(buf_dom, "[POZ] Pacjent %d zdrowy - odeslany do domu (5%%)\n", pacjent.pacjent_pid);
+            zapisz_raport(FILE_DEST, semid, buf_dom);
+        }
 
-        if(msgsnd(msgid_spec[id_specjalisty], &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
+        pacjent.mtype = pacjent.pacjent_pid;
+
+        if(msgsnd(msgid_wyn, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
         {
             perror("poz - blad wysylania do specjalisty");
         }
@@ -157,9 +157,7 @@ void praca_specjalista(int typ_lekarza, int msgid_spec, int msgid_wyn)
             break;            
         }
 
-        printf("%s", dialog[typ_lekarza]);
-
-        int r = rand() % 100;
+        int r = rand() % 1000;
 
         int skierowanie = 0;
         if (r < 850) skierowanie = 1; //do domu
@@ -235,7 +233,7 @@ int main(int argc, char*argv[])
 
     if (typ_lekarza == 0)
     {
-        praca_poz(msgid_poz, msgid_wyn, msgid_spec);
+        praca_poz(msgid_poz, msgid_wyn);
     }
     else
     {
