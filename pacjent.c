@@ -7,6 +7,7 @@
 #include <sys/msg.h>
 #include <sys/shm.h>
 #include <sys/sem.h>
+#include <pthread.h>
 
 int semid = -1;
 
@@ -19,6 +20,12 @@ void handle_sig(int sig)
         zapisz_raport(FILE_DEST, semid, buf);
         exit(0);
     }
+}
+
+void* watek_rodzic(void* arg)
+{
+    //co moze robic rodzic
+    return NULL;
 }
 
 int main(int argc, char *argv[])
@@ -81,13 +88,43 @@ int main(int argc, char *argv[])
     int wiek = rand() % 100;
     int vip = rand() % 100 < 20; //20% szans
 
-    char buf[80];
-    sprintf(buf, "[pacjent] id: %d --- wiek: %d --- vip: %s\n", mpid, wiek, vip ? "tak" : "nie");
+    int potrzebny_rodzic = (wiek < 18);
+    int sem_op_miejsca = potrzebny_rodzic ? 2 : 1; 
+
+    pthread_t rodzic_thread;
+    unsigned long id_opiekuna = 0; 
+
+    if (potrzebny_rodzic) {
+        if(pthread_create(&rodzic_thread, NULL, watek_rodzic, NULL) != 0) 
+        {
+            perror("blad tworzenia watku rodzic");            
+            potrzebny_rodzic = 0; 
+            sem_op_miejsca = 1;
+        } 
+        else 
+        {           
+            id_opiekuna = (unsigned long)rodzic_thread;
+        }
+    }
+
+    
+    char buf[150]; 
+    if (potrzebny_rodzic)
+    {
+        sprintf(buf, "[pacjent] id: %d --- wiek: %d --- vip: %s\t [rodzic] tid: %lu\n", 
+                mpid, wiek, vip ? "tak" : "nie", id_opiekuna);
+    } 
+    else 
+    {
+        sprintf(buf, "[pacjent] id: %d --- wiek: %d --- vip: %s\n", 
+                mpid, wiek, vip ? "tak" : "nie");
+    }
+    
     zapisz_raport(FILE_DEST, semid, buf);
 
     struct sembuf wejscie_do_poczekalni;
     wejscie_do_poczekalni.sem_num = SEM_MIEJSCA_SOR; 
-    wejscie_do_poczekalni.sem_op = -1;
+    wejscie_do_poczekalni.sem_op = -sem_op_miejsca;
     wejscie_do_poczekalni.sem_flg = SEM_UNDO;
 
 
@@ -111,7 +148,7 @@ int main(int argc, char *argv[])
 
     semop(semid, &mutex_lock, 1);
 
-    stan->liczba_pacjentow_w_srodku++;
+    stan->liczba_pacjentow_w_srodku += sem_op_miejsca;
     stan->dlugosc_kolejki_rejestracji++;      
 
     semop(semid, &mutex_unlock, 1);
@@ -172,7 +209,7 @@ int main(int argc, char *argv[])
 
 
     semop(semid, &mutex_lock, 1);
-    stan->liczba_pacjentow_w_srodku--;
+    stan->liczba_pacjentow_w_srodku -= sem_op_miejsca;
     stan->obs_pacjenci++;
     stan->obs_kolory[msg.kolor]++;
     if (!(msg.typ_lekarza))
@@ -187,10 +224,13 @@ int main(int argc, char *argv[])
     }
     semop(semid, &mutex_unlock, 1);
     
+    if (potrzebny_rodzic) {
+        pthread_join(rodzic_thread, NULL);
+    }
 
     struct sembuf wyjscie_z_poczekalni;
     wyjscie_z_poczekalni.sem_num = SEM_MIEJSCA_SOR; 
-    wyjscie_z_poczekalni.sem_op = 1;
+    wyjscie_z_poczekalni.sem_op = sem_op_miejsca;
     wyjscie_z_poczekalni.sem_flg = SEM_UNDO;
 
     semop(semid, &wyjscie_z_poczekalni, 1);

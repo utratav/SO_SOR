@@ -12,7 +12,7 @@ main: main.c wspolne.h
 	$(CC) $(CFLAGS) -o main main.c
 
 pacjent: pacjent.c wspolne.h
-	$(CC) $(CFLAGS) -o pacjent pacjent.c
+	$(CC) $(CFLAGS) -o pacjent pacjent.c -lpthread
 
 lekarz: lekarz.c wspolne.h
 	$(CC) $(CFLAGS) -o lekarz lekarz.c

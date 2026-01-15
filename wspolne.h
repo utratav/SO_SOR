@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <time.h>
 
+
 #define FILE_DEST RAPORT_1
 
 #define RAPORT_1 "raport1.txt"
