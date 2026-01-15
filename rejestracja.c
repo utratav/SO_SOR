@@ -91,7 +91,8 @@ int main(int argc, char*argv[])
         int flaga = 0;
         if (nr_okienka == 2) flaga = IPC_NOWAIT;
 
-        ssize_t status = msgrcv(msgid_we, &pacjent, sizeof(pacjent) - sizeof(long), -2, flaga);
+        
+        ssize_t status = msgrcv(msgid_we, &pacjent, sizeof(KomunikatPacjenta) - sizeof(long), -2, flaga);
 
         if (status == -1)
         {
@@ -114,7 +115,7 @@ int main(int argc, char*argv[])
         semop(semid, &unlock, 1);
 
         pacjent.mtype = pacjent.pacjent_pid; 
-        if(msgsnd(msgid_wy, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
+        if(msgsnd(msgid_wy, &pacjent, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
         {
             perror("rejestracja - blad przekazania do POZ");
         }

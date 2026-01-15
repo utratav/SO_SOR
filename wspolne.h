@@ -18,9 +18,9 @@
 #define RAPORT_3 "raport3.txt"
 #define RAPORT_4 "raport4.txt"
 
-#define MAX_PROCESOW 10
+#define MAX_PROCESOW 1
 
-#define MAX_PACJENTOW 5 //N
+#define MAX_PACJENTOW 3 //N
 #define LIMIT_KOLEJKI_K (MAX_PACJENTOW / 2) //K-prog otwracia drugiej
 
 //parametry dla ftok

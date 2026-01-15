@@ -39,14 +39,24 @@ const char* int_to_lekarz(int typ) {
     }
 }
 
-int int_2_skierowanie(int typ) {
+const char* int_2_skierowanie(int typ) {
     switch(typ) {
         case 1: return "Pacjent odeslany do domu";
         case 2: return "Pacjent skierowany na oddzial";
         case 3: return "Pacjent skierowany do innej placowki";
-       default: return -1;
+       default: return "blad";
     }
 }
+
+const char* dialog[7] = {
+    "",                               // 0 - POZ (nie używa)
+    "pobieram probke krwi...",        // 1 - Kardiolog
+    "podpinam diody do mozgu...",     // 2 - Neurolog
+    "badam uszy...",                  // 3 - Laryngolog
+    "przeprowadzam operacje...",      // 4 - Chirurg
+    "badam oczy...",                  // 5 - Okulista
+    "badam malego pacjenta..."        // 6 - Pediatra
+};
 
 void handle_sig(int sig)
 {
@@ -141,18 +151,18 @@ void praca_specjalista(int typ_lekarza, int msgid_spec, int msgid_wyn)
         if(wezwanie_na_oddzial)
         {
             char buf[100];
-            sprintf(buf, "[%s] wezwanie na oddzial", jaki_lekarz);
+            sprintf(buf, "[SIGNAL 2 %s] wezwanie na oddzial\n", jaki_lekarz);
             zapisz_raport(FILE_DEST, semid, buf);
             sleep(5);
             char buff[100];
-            sprintf(buff, "[%s] wracam na SOR");
+            sprintf(buff, "[SIGNAL 2 %s] wracam na SOR\n", jaki_lekarz);
             zapisz_raport(FILE_DEST, semid, buff);
             wezwanie_na_oddzial = 0;
         }
 
         if(msgrcv(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), -3, 0) == -1)
         {
-            if (errno != EINTR) continue;
+            if (errno == EINTR) continue;
             perror("blad msgrcv");
             break;            
         }
@@ -181,14 +191,7 @@ void praca_specjalista(int typ_lekarza, int msgid_spec, int msgid_wyn)
     }
 }
 
-const char* dialog[6] = {
-    "pobieram probke krwi...",
-    "podpinam diody do mozgu...",
-    "badam uszy...",
-    "badam malego pacjenta",
-    "badam oczy...",
-    "przeprowadzam operacje"
-};
+
                                                        
 
 int main(int argc, char*argv[])
