@@ -10,6 +10,7 @@
 #include <pthread.h>
 
 int semid = -1;
+int semid_limits = -1;
 
 void handle_sig(int sig)
 {
@@ -28,23 +29,43 @@ void* watek_rodzic(void* arg)
     return NULL;
 }
 
+void lock(int sem_indeks)
+{
+    struct sembuf operacja;
+    operacja.sem_flg = SEM_UNDO;
+    operacja.sem_num = sem_indeks;
+    operacja.sem_op = -1;
+
+    semop(semid_limits, &operacja, 1);
+}
+
+void unlock(int sem_indeks)
+{
+    struct sembuf operacja;
+    operacja.sem_flg = SEM_UNDO;
+    operacja.sem_num = sem_indeks;
+    operacja.sem_op = 1;
+
+    semop(semid_limits, &operacja, 1);
+}
+
 int main(int argc, char *argv[])
 {
     signal(SIG_EWAKUACJA, handle_sig); 
     srand(time(NULL) ^ getpid());
 
     key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
+    key_t key_limits = ftok(FILE_KEY, ID_SEM_LIMITS);
+
     key_t key_msg_rej = ftok(FILE_KEY, ID_KOLEJKA_REJESTRACJA);
-    key_t key_msg_wyn = ftok(FILE_KEY, ID_KOLEJKA_WYNIKI);
     key_t key_msg_poz = ftok(FILE_KEY, ID_KOLEJKA_POZ);
 
     key_t key_shm = ftok(FILE_KEY, ID_SHM_MEM);
 
     semid = semget(key_sem, 0, 0);
-
+    semid_limits = semget(key_limits, 0, 0);
 
     int rej_msgid = msgget(key_msg_rej, 0);
-    int wynik_id = msgget(key_msg_wyn, 0);
     int poz_id = msgget(key_msg_poz, 0);
 
     int shmid = shmget(key_shm, 0, 0);
@@ -60,7 +81,7 @@ int main(int argc, char *argv[])
     spec_msgids[5] = msgget(ftok(FILE_KEY, ID_KOL_OKULISTA), 0);
     spec_msgids[6] = msgget(ftok(FILE_KEY, ID_KOL_PEDIATRA), 0);
 
-    if (semid == -1 || rej_msgid == -1 || shmid == -1 || wynik_id == -1 || poz_id == -1)
+    if (semid == -1 || rej_msgid == -1 || shmid == -1 || poz_id == -1 || semid_limits == -1)
     {
         perror("blad przy podlaczaniu do ipc");
         exit(EXIT_FAILURE);
@@ -94,7 +115,8 @@ int main(int argc, char *argv[])
     pthread_t rodzic_thread;
     unsigned long id_opiekuna = 0; 
 
-    if (potrzebny_rodzic) {
+    if (potrzebny_rodzic) 
+    {
         if(pthread_create(&rodzic_thread, NULL, watek_rodzic, NULL) != 0) 
         {
             perror("blad tworzenia watku rodzic");            
@@ -163,54 +185,80 @@ int main(int argc, char *argv[])
     
     
 
+    lock(SLIMIT_REJESTRACJA);
     if (msgsnd(rej_msgid, &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
     {
         perror("blad wysylania do rejestracji");
-    }   
-
-   
+    }    
  
-
-    if (msgrcv(wynik_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
+    if (msgrcv(rej_msgid, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
     {
         perror("blad msgrcv od rejestracji");
         exit(1);
     }
+    unlock(SLIMIT_REJESTRACJA);
+
+
 
     
 
     msg.mtype = 1; //wyrownujemy vip i zwyklych do tego samego prior. w msgrcv i tak msgtype = 0
+    lock(SLIMIT_POZ);
     if (msgsnd(poz_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
     {
         perror("blad msgsnd wysylania do poz");
     }
 
-    if (msgrcv(wynik_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
+    if (msgrcv(poz_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
     {
         perror("blad msgrcv od poz");
         exit(1);
     }
+    unlock(SLIMIT_POZ);
 
     if (msg.typ_lekarza > 0)
     {
         int id_spec = msg.typ_lekarza;
         msg.mtype = msg.kolor;
+        int sem_limit_indeks = -1;
 
-        if (msgsnd(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
+        switch (id_spec) 
         {
-            perror("blad wysylania do specjalisty");
+            case LEK_KARDIOLOG:  sem_limit_indeks = SLIMIT_KARDIOLOG; break;
+            case LEK_NEUROLOG:   sem_limit_indeks = SLIMIT_NEUROLOG; break;
+            case LEK_LARYNGOLOG: sem_limit_indeks = SLIMIT_LARYNGOLOG; break;
+            case LEK_CHIRURG:    sem_limit_indeks = SLIMIT_CHIRURG; break;
+            case LEK_OKULISTA:   sem_limit_indeks = SLIMIT_OKULISTA; break;
+            case LEK_PEDIATRA:   sem_limit_indeks = SLIMIT_PEDIATRA; break;
+            default: break;
         }
 
-        if (msgrcv(wynik_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
+        if (sem_limit_indeks != -1)
         {
-            perror("blad msgrcv od specjalisty");
+            lock(sem_limit_indeks);
+
+            if (msgsnd(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
+            {
+                perror("blad wysylania do specjalisty");
+            }
+
+            if (msgrcv(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
+            {
+                perror("blad msgrcv od specjalisty");
+            }
+
+            unlock(sem_limit_indeks);
         }
+        else perror("blad przydzialu indeksu specjalisty do indeksu kolejki");
+
+        
     }
 
 
     semop(semid, &mutex_lock, 1);
     stan->liczba_pacjentow_w_srodku -= sem_op_miejsca;
     stan->obs_pacjenci++;
+    if(msg.czy_vip) stan->ile_vip++;
     stan->obs_kolory[msg.kolor]++;
     if (!(msg.typ_lekarza))
     {
@@ -237,7 +285,6 @@ int main(int argc, char *argv[])
     shmdt(stan);
 
     return 0;
-
 
 
 

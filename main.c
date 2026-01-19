@@ -3,12 +3,89 @@
 #include <errno.h>
 #include <sys/wait.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 int semid = -1;
+int semid_limits = -1;
 int shmid = -1;
 int msgs_ids[20];
 pid_t pid_lekarze[10];
-//TO DO CZYSZCZENIE
+
+volatile int petla = 1;
+pthread_t sem_stan;
+
+const char* nazwy_kolejek[LICZBA_SLIMITS] = {
+    "Rejestracja", "POZ", "Kardiolog", "Neurolog", 
+    "Laryngolog", "Chirurg", "Okulista", "Pediatra"
+};
+
+void* stan_semaforow(void* arg)
+{
+
+    zapisz_raport(RAPORT_2, semid, "STAN KOLEJEK \n\n");
+
+    struct msqid_ds staty;
+    unsigned long systemowy_limit_bajtow = 0;
+
+    if (msgs_ids[0] != -1) 
+    {
+        if (msgctl(msgs_ids[0], IPC_STAT, &staty) == -1) 
+        {
+            perror("blad pobierania IPC_STAT");
+        }
+        else
+        {
+            systemowy_limit_bajtow = staty.msg_qbytes;
+        }
+    }
+
+    size_t rozmiar_payloadu = sizeof(KomunikatPacjenta) - sizeof(long);
+    
+    unsigned long pojemnosc_kolejki = 0;
+    if (rozmiar_payloadu > 0) 
+    {
+        pojemnosc_kolejki = systemowy_limit_bajtow / rozmiar_payloadu;
+    }
+
+    char buf[512];
+    sprintf(buf, 
+        "systemowo limit dla kolejki w IPC_STAT = %lu (bajtow)\n"
+        "sizeof(KomunikatPacjenta) - sizeof(long) = %lu (bajtow)\n"
+        "fiyzyczna ilosc slotow dla pojedynczej kolejki = %lu\n"
+        "obecnie ustawiony limit dla semaforow kolejek = %d\n",
+        systemowy_limit_bajtow, 
+        rozmiar_payloadu, 
+        pojemnosc_kolejki, 
+        INT_LIMIT_KOLEJEK
+    );
+    zapisz_raport(RAPORT_2, semid, buf);
+
+    while(petla)
+    {
+        if (semid_limits != -1)
+        {
+            unsigned short stany[LICZBA_SLIMITS];
+            union semun arg;
+            arg.array = stany;
+
+            if (semctl(semid_limits, 0, GETALL, arg) != -1)
+            {
+                for (int i = 0; i < LICZBA_SLIMITS; i++)
+                {
+                    int zajete = INT_LIMIT_KOLEJEK - stany[i];
+                    char buf[60];
+                    sprintf(buf, "[%s]: wolnych: %d (zajetych: %d)\n", 
+                        nazwy_kolejek[i], stany[i], zajete);
+                    zapisz_raport(RAPORT_2, semid, buf);
+                }
+            }
+        }
+
+        sleep(1);
+    }
+
+    return NULL;
+}
 
 void czyszczenie() 
 {     
@@ -29,6 +106,12 @@ void czyszczenie()
     if (semid != -1) {
         if (semctl(semid, 0, IPC_RMID) == -1) perror("Blad usuwania SEM");
         else zapisz_raport(FILE_DEST, semid, "[main] usunieto semafory");
+    }
+
+    if (semid_limits != -1)
+    {
+        if (semctl(semid_limits, 0, IPC_RMID) == -1) perror("Blad usuwania SEM_LIMITS");
+        else zapisz_raport(FILE_DEST, semid, "[main] usunieto semafory dla kolejek");
     }
 
     for (int i = 0; i < 20; i++) {
@@ -65,6 +148,9 @@ void signal_handler(int sig)
     if (sig == SIGINT) {
        
         zapisz_raport(FILE_DEST, semid, "[main] otrzymano sygnal ewakuacja...\n");
+        petla = 0;
+        pthread_join(sem_stan, NULL);
+        zapisz_raport(FILE_DEST, semid, "[main] zamykam watki...\n");
         kill(0, SIG_EWAKUACJA); 
         zapisz_raport(FILE_DEST, semid, "[main] zamykam procesy potomne...\n");
         while(wait(NULL) > 0); 
@@ -88,29 +174,25 @@ int main()
     signal(SIGINT, signal_handler);
     signal(SIG_EWAKUACJA, SIG_IGN);
 
-    FILE *f = fopen(FILE_DEST, "w");
+    fclose(fopen(FILE_DEST, "w"));
+    fclose(fopen(RAPORT_2, "w"));
 
-    if (f)
-    {
-        fprintf(f, "[main]\trozpoczynam symulacje...\n");
-        fclose(f);
-    }
-
+    
     key_t key_shm = ftok(FILE_KEY, ID_SHM_MEM); 
     key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
+    key_t key_limits = ftok(FILE_KEY, ID_SEM_LIMITS);
 
     for(int i=0; i<20; i++) msgs_ids[i] = -1;
 
     msg_creat(0, ID_KOLEJKA_REJESTRACJA);
     msg_creat(1, ID_KOLEJKA_POZ);
-    msg_creat(2, ID_KOLEJKA_WYNIKI);
-    
-    msg_creat(3, ID_KOL_KARDIOLOG);
-    msg_creat(4, ID_KOL_NEUROLOG);
-    msg_creat(5, ID_KOL_LARYNGOLOG);
-    msg_creat(6, ID_KOL_CHIRURG);
-    msg_creat(7, ID_KOL_OKULISTA);
-    msg_creat(8, ID_KOL_PEDIATRA);
+ 
+    msg_creat(2, ID_KOL_KARDIOLOG);
+    msg_creat(3, ID_KOL_NEUROLOG);
+    msg_creat(4, ID_KOL_LARYNGOLOG);
+    msg_creat(5, ID_KOL_CHIRURG);
+    msg_creat(6, ID_KOL_OKULISTA);
+    msg_creat(7, ID_KOL_PEDIATRA);
 
     shmid = shmget(key_shm, sizeof(StanSOR), IPC_CREAT | 0600);
     if (shmid == -1)
@@ -133,6 +215,8 @@ int main()
     stan->czy_okienko_2_otwarte = 0;
     stan->obs_pacjenci = 0;
     stan->obs_dom_poz = 0;
+    stan->ile_vip = 0;
+    stan->sig_wezwano = 0;
 
     for(int i=0; i<7; i++) stan->obs_spec[i] = 0;
     for(int i=0; i<4; i++) stan->obs_kolory[i] = 0;
@@ -146,6 +230,15 @@ int main()
         czyszczenie();
         exit(EXIT_FAILURE);
     }
+
+    semid_limits = semget(key_limits, LICZBA_SLIMITS, IPC_CREAT | 0600);
+    if (semid_limits == -1)
+    {
+        perror("blad semget");
+        czyszczenie();
+        exit(EXIT_FAILURE);
+    }
+
  
     union semun arg;  
 
@@ -182,6 +275,20 @@ int main()
         exit(EXIT_FAILURE);
     }
 
+    unsigned short wartosci[LICZBA_SLIMITS];
+    for (int i = 0; i < LICZBA_SLIMITS; i++)
+    {
+        wartosci[i] = INT_LIMIT_KOLEJEK;
+    }
+
+    
+    arg.array = wartosci;
+
+    if (semctl(semid_limits, 0, SETALL, arg) == -1)
+    {
+        perror("blad inicjalizacji limits kolejek setall");
+        exit(EXIT_FAILURE);
+    }
 
 
     uruchom_proces("./rejestracja", "1");
@@ -198,12 +305,14 @@ int main()
     }
 
     uruchom_proces("./generator", NULL);
-    
+
+    if (pthread_create(&sem_stan, NULL, stan_semaforow, NULL) != 0) perror("nie udalo sie utworzyc watku stany sem");
+  
     int wybor;
     printf("\n\t menu dla uzytkownika\n");
     printf("0 - ewakuacja sor. analogicznie uzyj CTRL + C\n");
     printf("pozostale opcje: wezwij lekarza na oddzial:\n");
-    printf("1 - pediatra\n2 - kardiolog\n3 - neurolog\n4 - okulista\n5 - laryngolog\n6 - chirurg\n\n");
+    printf("1 - kardiolog\n2 - neurolog\n3 - laryngolog\n4 - chirurg\n5 - okulista\n6 - pediatra\n\n");
 
     while(1)
     {

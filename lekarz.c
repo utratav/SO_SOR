@@ -72,7 +72,7 @@ void handle_sig(int sig)
 }
 
 
-void praca_poz(int msgid_poz, int msgid_wyn)
+void praca_poz(int msgid_poz)
 {
     KomunikatPacjenta pacjent;   
 
@@ -94,15 +94,15 @@ void praca_poz(int msgid_poz, int msgid_wyn)
 
 
        int r = rand() % 100;
-        if (r < 10) 
+        if ((5 < r) && (r < 15)) 
         {
             pacjent.kolor = CZERWONY;
         }
-        else if (r < 45) // 10 + 35 = 45
+        else if (r < 50) // 10 + 35 = 45
         {
             pacjent.kolor = ZOLTY;
         }
-        else 
+        else if (!(r < 5))
         {
             pacjent.kolor = ZIELONY;
         }
@@ -118,8 +118,8 @@ void praca_poz(int msgid_poz, int msgid_wyn)
         }
         pacjent.typ_lekarza = id_specjalisty;
 
-        int r_dom = rand() % 100;
-        if (r_dom < 5)
+        
+        if (r < 5)
         {
             pacjent.typ_lekarza = 0;
             pacjent.skierowanie = 1;  
@@ -131,7 +131,7 @@ void praca_poz(int msgid_poz, int msgid_wyn)
 
         pacjent.mtype = pacjent.pacjent_pid;
 
-        if(msgsnd(msgid_wyn, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
+        if(msgsnd(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
         {
             perror("poz - blad wysylania do specjalisty");
         }
@@ -140,7 +140,7 @@ void praca_poz(int msgid_poz, int msgid_wyn)
     }
 }
 
-void praca_specjalista(int typ_lekarza, int msgid_spec, int msgid_wyn)
+void praca_specjalista(int typ_lekarza, int msgid_spec)
 {
     KomunikatPacjenta pacjent;
 
@@ -154,7 +154,7 @@ void praca_specjalista(int typ_lekarza, int msgid_spec, int msgid_wyn)
             sprintf(buf, "[SIGNAL 2 %s] wezwanie na oddzial\n", jaki_lekarz);
             zapisz_raport(FILE_DEST, semid, buf);
 
-            sleep(10); //NIE USUWAJ
+            sleep(10); //NIE USUWAJ  
 
             char buff[100];
             sprintf(buff, "[SIGNAL 2 %s] wracam na SOR\n", jaki_lekarz);
@@ -185,7 +185,7 @@ void praca_specjalista(int typ_lekarza, int msgid_spec, int msgid_wyn)
 
         pacjent.mtype = pacjent.pacjent_pid;
 
-        if (msgsnd(msgid_wyn, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
+        if (msgsnd(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
         {
             perror("specjalista - blad msgsnd");
             
@@ -217,7 +217,6 @@ int main(int argc, char*argv[])
     typ_lekarza = atoi(argv[1]);
 
     int msgid_poz = msgget(ftok(FILE_KEY, ID_KOLEJKA_POZ), 0);
-    int msgid_wyn = msgget(ftok(FILE_KEY, ID_KOLEJKA_WYNIKI), 0);
     semid = semget(ftok(FILE_KEY, ID_SEM_SET), 0, 0); 
 
 
@@ -238,11 +237,11 @@ int main(int argc, char*argv[])
 
     if (typ_lekarza == 0)
     {
-        praca_poz(msgid_poz, msgid_wyn);
+        praca_poz(msgid_poz);
     }
     else
     {
-        praca_specjalista(typ_lekarza, msgid_spec[typ_lekarza], msgid_wyn);
+        praca_specjalista(typ_lekarza, msgid_spec[typ_lekarza]);
     }
 
     return 0;

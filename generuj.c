@@ -31,7 +31,7 @@ void handle_sigchld(int sig)
 
     errno = pam_errno;
 }
-
+  
 void handle_sigint(int sig)
 {
     petla = 0;

@@ -19,9 +19,9 @@
 #define RAPORT_3 "raport3.txt"
 #define RAPORT_4 "raport4.txt"
 
-#define MAX_PROCESOW 100
+#define MAX_PROCESOW 500
 
-#define MAX_PACJENTOW  80//N
+#define MAX_PACJENTOW  400//N
 #define LIMIT_KOLEJKI_K (MAX_PACJENTOW / 2) //K-prog otwracia drugiej
 #define ZAMKNIECIE_KOLEJKI (MAX_PACJENTOW / 3)  
 
@@ -31,10 +31,10 @@
 
 #define ID_SHM_MEM 'M'
 #define ID_SEM_SET 'S'
+#define ID_SEM_LIMITS 'L'
 
-#define ID_KOLEJKA_REJESTRACJA 'R' //pacjent->rejestracja
-#define ID_KOLEJKA_POZ 'T'  //rejestracja ->poz
-#define ID_KOLEJKA_WYNIKI 'W'   //jeden ze specjalistow -> pacjent
+#define ID_KOLEJKA_REJESTRACJA 'R' 
+#define ID_KOLEJKA_POZ 'T' 
 
 #define ID_KOL_KARDIOLOG   '1'
 #define ID_KOL_NEUROLOG    '2'
@@ -42,6 +42,18 @@
 #define ID_KOL_CHIRURG     '4'
 #define ID_KOL_OKULISTA    '5'
 #define ID_KOL_PEDIATRA    '6'
+
+#define SLIMIT_REJESTRACJA 0
+#define SLIMIT_POZ 1
+#define SLIMIT_KARDIOLOG 2
+#define SLIMIT_NEUROLOG 3
+#define SLIMIT_LARYNGOLOG 4
+#define SLIMIT_CHIRURG 5
+#define SLIMIT_OKULISTA 6
+#define SLIMIT_PEDIATRA 7
+
+#define LICZBA_SLIMITS 8
+#define INT_LIMIT_KOLEJEK 150
 
 
 
@@ -62,7 +74,7 @@
 #define SEM_DOSTEP_PAMIEC 0 //bin
 #define SEM_MIEJSCA_SOR 1 //counter
 #define SEM_ZAPIS_PLIK 2 //bin
-#define SEM_GENERATOR 3
+#define SEM_GENERATOR 3 //counter
 
 
 
@@ -89,10 +101,12 @@ typedef struct {
     int dlugosc_kolejki_rejestracji;
     int czy_okienko_2_otwarte;
 
+    int ile_vip;
     int obs_pacjenci;
     int obs_spec[7]; 
     int obs_kolory[4];
     int obs_dom_poz;
+    int sig_wezwano;
 
     int decyzja[3];
     
@@ -144,16 +158,25 @@ static void zapisz_raport(const char* nazwa_pliku, int semid, const char* tresc)
 
 static void podsumowanie(StanSOR *stan)
 {
-    printf("\n-----------------\n");
+    double p = (double)stan->obs_pacjenci;
+    if (p == 0) p = 1.0;
+
+    printf("\n----------------------------------------------\n");
     printf("\tpodsumowanie symulacji\n\n");
 
     printf("obsluzeni pacjenci: %d\n\n", stan->obs_pacjenci);
-    printf("pacjenci odeslani do domu bezposrednio po POZ: %d\n", stan->obs_dom_poz);
+
+    printf("liczba pacjentow VIP: %d (docelowo: %d)\n", stan->ile_vip,(int)(0.2 * p + 0.5));
+    printf("liczba pacjentow zwyklych: %d (docelowo: %d)\n", stan->obs_pacjenci - stan->ile_vip,(int)(0.8 * p + 0.5));
+
+
+    printf("pacjenci odeslani do domu bezposrednio po POZ: %d (docelowo: %d)\n",
+         stan->obs_dom_poz,(int)(0.05 * p + 0.5));
 
     printf("\n\tnadane priorytety\n");
-    printf("czerwony: %d razy\n", stan->obs_kolory[CZERWONY]);
-    printf("zolty: %d razy\n", stan->obs_kolory[ZOLTY]);
-    printf("zielony: %d razy\n", stan->obs_kolory[ZIELONY]);
+    printf("czerwony: %d razy (docelowo: %d)\n", stan->obs_kolory[CZERWONY],(int)(0.1 * p + 0.5));
+    printf("zolty: %d razy (docelowo: %d)\n", stan->obs_kolory[ZOLTY], (int)(0.35 * p + 0.5));
+    printf("zielony: %d razy (docelowo: %d)\n", stan->obs_kolory[ZIELONY], (int)(0.5 * p + 0.5));
 
     printf("\n\tobsluzeni specjalisci\n");
     const char* nazwy_spec[] = {"", "Kardiolog", "Neurolog", "Laryngolog", "Chirurg", "Okulista", "Pediatra"};
@@ -162,11 +185,11 @@ static void podsumowanie(StanSOR *stan)
     }
 
     printf("\n\tskierowanie dalej\n");
-    printf("odeslani do domu: %d\n", stan->decyzja[1]);
-    printf("skierowani na oddzial: %d\n", stan->decyzja[2]);
-    printf("do innej placowki: %d\n", stan->decyzja[3]);
+    printf("odeslani do domu: %d (docelowo: %d)\n", stan->decyzja[1], (int)(0.85 * p + 0.5));
+    printf("skierowani na oddzial: %d (docelowo: %d)\n", stan->decyzja[2], (int)(0.145 * p + 0.5));
+    printf("do innej placowki: %d (docelowo: %d)\n", stan->decyzja[3], (int)(0.005 * p + 0.5));
 
-    printf("-----------------\n");
+    printf("----------------------------------------------\n");
 
 
 }

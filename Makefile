@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall
+CFLAGS = -Wall -pthread
 
 TARGETS = main pacjent lekarz rejestracja generator
 
