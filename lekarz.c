@@ -49,7 +49,7 @@ const char* int_2_skierowanie(int typ) {
 }
 
 const char* dialog[7] = {
-    "",                               // 0 - POZ (nie używa)
+    "",                               
     "pobieram probke krwi...",        // 1 - Kardiolog
     "podpinam diody do mozgu...",     // 2 - Neurolog
     "badam uszy...",                  // 3 - Laryngolog
@@ -66,7 +66,7 @@ void handle_sig(int sig)
     }
     else if(sig == SIG_EWAKUACJA)
     {
-        zapisz_raport(FILE_DEST, semid, "[lekarz] sygnal ewakuacja\n");
+        zapisz_raport(KONSOLA, semid, "[lekarz] sygnal ewakuacja\n");
         exit(0);
     }
 }
@@ -87,47 +87,48 @@ void praca_poz(int msgid_poz)
             }
         } 
 
-        char buf[100];
-        sprintf(buf, "[POZ] wykonuje podstawowe badania na pacjencie %d, nadaje priorytet\n",
-        pacjent.pacjent_pid);
-        zapisz_raport(FILE_DEST, semid, buf);
+        zapisz_raport(KONSOLA, semid,"[POZ] wykonuje podstawowe badania na pacjencie %d, nadaje priorytet\n",pacjent.pacjent_pid );
 
 
        int r = rand() % 100;
-        if ((5 < r) && (r < 15)) 
+        if (r < 10) 
         {
             pacjent.kolor = CZERWONY;
         }
-        else if (r < 50) // 10 + 35 = 45
+        else if (r < 45) // 10 + 35 = 45
         {
             pacjent.kolor = ZOLTY;
         }
-        else if (!(r < 5))
+        else if (r < 95)
         {
             pacjent.kolor = ZIELONY;
         }
-
-        int id_specjalisty;
-        if (pacjent.wiek < 18)
-        {
-            id_specjalisty = LEK_PEDIATRA; 
-        }
         else
-        {
-            id_specjalisty = (rand() % 5) + 1; 
-        }
-        pacjent.typ_lekarza = id_specjalisty;
-
-        
-        if (r < 5)
         {
             pacjent.typ_lekarza = 0;
             pacjent.skierowanie = 1;  
             
-            char buf_dom[100];
-            sprintf(buf_dom, "[POZ] Pacjent %d zdrowy - odeslany do domu (5%%)\n", pacjent.pacjent_pid);
-            zapisz_raport(FILE_DEST, semid, buf_dom);
+            zapisz_raport(KONSOLA, semid, "[POZ] Pacjent %d zdrowy - odeslany do domu\n", pacjent.pacjent_pid);
         }
+
+        if (!pacjent.typ_lekarza)
+        {
+            int id_specjalisty;
+
+            if (pacjent.wiek < 18)
+            {
+                id_specjalisty = LEK_PEDIATRA; 
+            }
+            else
+            {
+                id_specjalisty = (rand() % 5) + 1; 
+            }
+            
+            pacjent.typ_lekarza = id_specjalisty;
+        }
+
+        
+        
 
         pacjent.mtype = pacjent.pacjent_pid;
 
@@ -150,15 +151,13 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
     {
         if(wezwanie_na_oddzial)
         {
-            char buf[100];
-            sprintf(buf, "[SIGNAL 2 %s] wezwanie na oddzial\n", jaki_lekarz);
-            zapisz_raport(FILE_DEST, semid, buf);
+            
+            zapisz_raport(KONSOLA, semid, "[SIGNAL 2 %s] wezwanie na oddzial\n", jaki_lekarz);
 
-            sleep(10); //NIE USUWAJ  
+            sleep(5); //NIE USUWAJ  
 
-            char buff[100];
-            sprintf(buff, "[SIGNAL 2 %s] wracam na SOR\n", jaki_lekarz);
-            zapisz_raport(FILE_DEST, semid, buff);
+            
+            zapisz_raport(KONSOLA, semid, "[SIGNAL 2 %s] wracam na SOR\n", jaki_lekarz);
             wezwanie_na_oddzial = 0;
         }
 
@@ -176,10 +175,9 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
         else if (r < 995) skierowanie = 2; //na oddzial
         else skierowanie = 3; //do innej placowki
 
-        char buf[100];
-        sprintf(buf, "[%s] %s %s\n", 
+        
+        zapisz_raport(KONSOLA, semid, "[%s] %s %s\n", 
             jaki_lekarz, dialog[typ_lekarza], int_2_skierowanie(skierowanie));
-        zapisz_raport(FILE_DEST, semid, buf);
 
         pacjent.skierowanie = skierowanie;
 

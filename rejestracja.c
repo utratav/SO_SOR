@@ -12,16 +12,19 @@ int semid = -1;
 
 void handle_sig(int sig)
 {
-    char buf[80];
-    sprintf(buf, "[rejestracja] sygnal ewakuacja - koniec pracy okienka %d\n", nr_okienka);
-    zapisz_raport(FILE_DEST, semid, buf);
-    exit(0);
+    if (sig == SIG_EWAKUACJA)
+    {
+        
+        zapisz_raport(KONSOLA, semid, "[rejestracja %d] Otrzymano ewakuacje. Zamykam okienko .\n", nr_okienka);
+        
+        exit(0); 
+    }
 }
 
 int main(int argc, char*argv[]) 
 {
 
-    signal(SIGTERM, handle_sig);
+    signal(SIG_EWAKUACJA, handle_sig);
 
     if (argc < 2)
     {
@@ -68,15 +71,13 @@ int main(int argc, char*argv[])
                 stan->czy_okienko_2_otwarte = 1;
                 char buf[60];
                 sprintf(buf, "[rejestracja] otwieranie okienka 2, osob w kolejce: %d\n", kolejka);
-                zapisz_raport(FILE_DEST, semid, buf);
+                zapisz_raport(KONSOLA, semid, buf);
                 otwarte = 1;
             }
             else if (otwarte && kolejka < (MAX_PACJENTOW / 3)) 
             {
                 stan->czy_okienko_2_otwarte = 0;
-                char buf[60];
-                sprintf(buf, "[rejestracja] zamykanie okienka 2, osob w kolejce: %d\n", kolejka);
-                zapisz_raport(FILE_DEST, semid, buf);
+                zapisz_raport(KONSOLA, semid, "[rejestracja] zamykanie okienka 2, osob w kolejce: %d\n", kolejka);
                 otwarte = 0;
             }
             semop(semid, &unlock, 1);
@@ -122,10 +123,8 @@ int main(int argc, char*argv[])
         }
         else
         {
-            char buf[60];
-            sprintf(buf, "[rejestracja] okienko %d: pacjent %d przekazany do POZ\n",
-                 nr_okienka, pacjent.pacjent_pid);
-            zapisz_raport(FILE_DEST, semid, buf);
+                zapisz_raport(KONSOLA, semid, "[rejestracja] okienko %d: pacjent %d przekazany do POZ\n",
+                nr_okienka, pacjent.pacjent_pid);
 
         }        
 

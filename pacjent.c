@@ -16,9 +16,6 @@ void handle_sig(int sig)
 {
     if (sig == SIG_EWAKUACJA)
     {
-        char buf[50];
-        sprintf(buf, "[pacjent %d] ewakuacja", getpid());
-        zapisz_raport(FILE_DEST, semid, buf);
         exit(0);
     }
 }
@@ -105,6 +102,8 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    
+
     pid_t mpid = getpid();
     int wiek = rand() % 100;
     int vip = rand() % 100 < 20; //20% szans
@@ -142,7 +141,7 @@ int main(int argc, char *argv[])
                 mpid, wiek, vip ? "tak" : "nie");
     }
     
-    zapisz_raport(FILE_DEST, semid, buf);
+    zapisz_raport(KONSOLA, semid, buf);
 
     struct sembuf wejscie_do_poczekalni;
     wejscie_do_poczekalni.sem_num = SEM_MIEJSCA_SOR; 
@@ -186,40 +185,55 @@ int main(int argc, char *argv[])
     
 
     lock(SLIMIT_REJESTRACJA);
-    if (msgsnd(rej_msgid, &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
+    while (msgsnd(rej_msgid, &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
     {
+        if (errno == EINTR) continue;           
+        if (errno == EAGAIN) { usleep(10000); continue; }
         perror("blad wysylania do rejestracji");
+        exit(1);
     }    
  
-    if (msgrcv(rej_msgid, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
+    while (msgrcv(rej_msgid, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
     {
+        if (errno == EINTR) continue; 
         perror("blad msgrcv od rejestracji");
         exit(1);
     }
     unlock(SLIMIT_REJESTRACJA);
 
 
+    semop(semid, &mutex_lock, 1);
+    
+    stan->dlugosc_kolejki_rejestracji--;      
+
+    semop(semid, &mutex_unlock, 1);
+
+
 
     
 
-    msg.mtype = 1; //wyrownujemy vip i zwyklych do tego samego prior. w msgrcv i tak msgtype = 0
+    msg.mtype = 1; 
     lock(SLIMIT_POZ);
-    if (msgsnd(poz_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
+    while (msgsnd(poz_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
     {
+        if (errno == EINTR) continue;
+        if (errno == EAGAIN) { usleep(10000); continue; }
         perror("blad msgsnd wysylania do poz");
+        exit(1);
     }
 
-    if (msgrcv(poz_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
+    while (msgrcv(poz_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
     {
+        if (errno == EINTR) continue;
         perror("blad msgrcv od poz");
         exit(1);
     }
     unlock(SLIMIT_POZ);
 
-    if (msg.typ_lekarza > 0)
+   if (msg.typ_lekarza > 0)
     {
         int id_spec = msg.typ_lekarza;
-        msg.mtype = msg.kolor;
+        msg.mtype = msg.kolor; 
         int sem_limit_indeks = -1;
 
         switch (id_spec) 
@@ -237,21 +251,24 @@ int main(int argc, char *argv[])
         {
             lock(sem_limit_indeks);
 
-            if (msgsnd(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
+            while (msgsnd(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
             {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN) { usleep(10000); continue; }
                 perror("blad wysylania do specjalisty");
+                exit(1);
             }
 
-            if (msgrcv(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
+            while (msgrcv(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
             {
+                if (errno == EINTR) continue;
                 perror("blad msgrcv od specjalisty");
+                exit(1);
             }
 
             unlock(sem_limit_indeks);
         }
         else perror("blad przydzialu indeksu specjalisty do indeksu kolejki");
-
-        
     }
 
 
@@ -283,6 +300,8 @@ int main(int argc, char *argv[])
 
     semop(semid, &wyjscie_z_poczekalni, 1);
     shmdt(stan);
+
+    usleep(100000);
 
     return 0;
 
