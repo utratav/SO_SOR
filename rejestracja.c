@@ -21,6 +21,8 @@ void handle_sig(int sig)
     }
 }
 
+
+
 int main(int argc, char*argv[]) 
 {
 
@@ -60,33 +62,35 @@ int main(int argc, char*argv[])
 
     while(1)
     {
-        if (nr_okienka == 2)
+        if (nr_okienka == 1)
         {
             semop(semid, &lock, 1);
             int kolejka = stan->dlugosc_kolejki_rejestracji;
             int otwarte = stan->czy_okienko_2_otwarte;
-            
-            if (!otwarte && kolejka > (MAX_PACJENTOW / 2)) 
-            {
-                stan->czy_okienko_2_otwarte = 1;
-                char buf[60];
-                sprintf(buf, "[rejestracja] otwieranie okienka 2, osob w kolejce: %d\n", kolejka);
-                zapisz_raport(KONSOLA, semid, buf);
-                otwarte = 1;
-            }
-            else if (otwarte && kolejka < (MAX_PACJENTOW / 3)) 
+
+            if (otwarte && kolejka <= (MAX_PACJENTOW / 3)) 
             {
                 stan->czy_okienko_2_otwarte = 0;
-                zapisz_raport(KONSOLA, semid, "[rejestracja] zamykanie okienka 2, osob w kolejce: %d\n", kolejka);
-                otwarte = 0;
+                zapisz_raport(KONSOLA, semid, "[REJESTRACJA] Zamykam okienko 2. (Kolejka: %d)\n", kolejka);
+                zapisz_raport(RAPORT_2, semid, "[REJESTRACJA] Zamykam 2 okienko | osob w kolejce: %d\n", kolejka);
             }
             semop(semid, &unlock, 1);
+        }
 
-            
-            if (!otwarte) 
+        // ---------------------------------------------------------
+        // ROLA PRACOWNIKA DODATKOWEGO (Tylko Okienko 2)
+        // ---------------------------------------------------------
+        if (nr_okienka == 2)
+        {
+            // Sprawdzamy czy mamy pozwolenie na prace
+            semop(semid, &lock, 1);
+            int czy_pracowac = stan->czy_okienko_2_otwarte;
+            semop(semid, &unlock, 1);
+
+            if (!czy_pracowac)
             {
-                //usleep(200000); // 0.2 sekundy
-                continue;
+                usleep(50000); // Spij 50ms i sprawdz znowu
+                continue;      // Wroc na poczatek petli
             }
         }
 
@@ -100,7 +104,7 @@ int main(int argc, char*argv[])
         {
             if (errno == ENOMSG && nr_okienka == 2) {
                 
-                //usleep(100000);
+                usleep(100000);
                 continue;
             }
             if (errno != EINTR) perror("rejestracja - blad msgrcv");
@@ -112,9 +116,7 @@ int main(int argc, char*argv[])
 
         //usleep(500000);  
 
-        semop(semid, &lock, 1);
-        stan->dlugosc_kolejki_rejestracji--;
-        semop(semid, &unlock, 1);
+        
 
         pacjent.mtype = pacjent.pacjent_pid; 
         if(msgsnd(msgid_we, &pacjent, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)

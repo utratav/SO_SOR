@@ -16,6 +16,7 @@ void handle_sig(int sig)
 {
     if (sig == SIG_EWAKUACJA)
     {
+
         exit(0);
     }
 }
@@ -50,6 +51,9 @@ int main(int argc, char *argv[])
 {
     signal(SIG_EWAKUACJA, handle_sig); 
     srand(time(NULL) ^ getpid());
+
+    int czeka_na_rejestracje = 1;
+    int w_poczekalni = 1;
 
     key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
     key_t key_limits = ftok(FILE_KEY, ID_SEM_LIMITS);
@@ -170,7 +174,16 @@ int main(int argc, char *argv[])
     semop(semid, &mutex_lock, 1);
 
     stan->liczba_pacjentow_w_srodku += sem_op_miejsca;
-    stan->dlugosc_kolejki_rejestracji++;      
+    stan->dlugosc_kolejki_rejestracji++;    
+    
+    int prog_otwarcia = MAX_PACJENTOW / 2;
+    if (!stan->czy_okienko_2_otwarte && stan->dlugosc_kolejki_rejestracji > prog_otwarcia)
+    {
+        stan->czy_okienko_2_otwarte = 1;
+        
+                zapisz_raport(KONSOLA, semid, "[REJESTRACJA] Otwieram okienko 2 (Kolejka: %d)\n", stan->dlugosc_kolejki_rejestracji);
+                zapisz_raport(RAPORT_2, semid, "[REJESTRACJA] Otwieram 2 okienko | osob w kolejce: %d\n", stan->dlugosc_kolejki_rejestracji);
+    }
 
     semop(semid, &mutex_unlock, 1);
     
@@ -203,11 +216,11 @@ int main(int argc, char *argv[])
 
 
     semop(semid, &mutex_lock, 1);
+
     
     stan->dlugosc_kolejki_rejestracji--;      
 
     semop(semid, &mutex_unlock, 1);
-
 
 
     

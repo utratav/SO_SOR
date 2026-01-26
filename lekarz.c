@@ -89,8 +89,8 @@ void praca_poz(int msgid_poz)
 
         zapisz_raport(KONSOLA, semid,"[POZ] wykonuje podstawowe badania na pacjencie %d, nadaje priorytet\n",pacjent.pacjent_pid );
 
-
-       int r = rand() % 100;
+        int chory = 1;
+        int r = rand() % 100;
         if (r < 10) 
         {
             pacjent.kolor = CZERWONY;
@@ -105,13 +105,14 @@ void praca_poz(int msgid_poz)
         }
         else
         {
+            chory = 0;
             pacjent.typ_lekarza = 0;
             pacjent.skierowanie = 1;  
             
             zapisz_raport(KONSOLA, semid, "[POZ] Pacjent %d zdrowy - odeslany do domu\n", pacjent.pacjent_pid);
         }
 
-        if (!pacjent.typ_lekarza)
+        if (chory)
         {
             int id_specjalisty;
 
@@ -154,7 +155,7 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
             
             zapisz_raport(KONSOLA, semid, "[SIGNAL 2 %s] wezwanie na oddzial\n", jaki_lekarz);
 
-            sleep(5); //NIE USUWAJ  
+            sleep(10); //NIE USUWAJ  
 
             
             zapisz_raport(KONSOLA, semid, "[SIGNAL 2 %s] wracam na SOR\n", jaki_lekarz);

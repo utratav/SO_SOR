@@ -29,7 +29,7 @@ void* watek_monitor_kolejki(void* arg) {
     }
 
     while (monitor_running) {
-        sleep(1); // Probkowanie co 1 sekunde
+        usleep(100000); // Probkowanie co 1 sekunde
         
         if (semid_limits != -1) {
             unsigned short stany[LICZBA_SLIMITS];
@@ -39,20 +39,18 @@ void* watek_monitor_kolejki(void* arg) {
             // Pobranie stanow wszystkich bramek naraz
             if (semctl(semid_limits, 0, GETALL, arg) != -1) {
                 
-                // Sprawdzenie czy jest ruch (zeby nie spamowac pustymi logami)
-                int ruch = 0;
-                for(int i=0; i<LICZBA_SLIMITS; i++) {
-                    if(stany[i] < INT_LIMIT_KOLEJEK) { ruch = 1; break; }
-                }
+                
 
-                if(ruch) {
+                
                     time_t now = time(NULL);
                     char *t_str = ctime(&now);
                     t_str[strlen(t_str)-1] = '\0'; // Usuniecie entera z konca daty
 
-                    for (int i = 0; i < LICZBA_SLIMITS; i++) {
+                    for (int i = 0; i < LICZBA_SLIMITS; i++) 
+                    {
                         int zajete = INT_LIMIT_KOLEJEK - stany[i];
-                        if (zajete > 0) {
+                        if (zajete > 0) 
+                        {
                             // UZYCIE ZAPISZ_RAPORT (SZYBKA SCIEZKA - PLIK)
                             zapisz_raport(RAPORT_1, semid, 
                                           "%s;%s;%d;%d\n", 
@@ -60,7 +58,7 @@ void* watek_monitor_kolejki(void* arg) {
                         }
                     }
                     zapisz_raport(RAPORT_1, semid, "---\n");
-                }
+                
             }
         }
     }
@@ -68,7 +66,8 @@ void* watek_monitor_kolejki(void* arg) {
 }
 
 
-void* watek_monitor_bramki(void* arg) {
+void* watek_monitor_bramki(void* arg)
+{
     // 1. Naglowek
     FILE *f = fopen(RAPORT_2, "w");
     if(f) { 
@@ -76,33 +75,56 @@ void* watek_monitor_bramki(void* arg) {
         fclose(f); 
     }
 
+    // PODLACZENIE DO PAMIECI (RAZ, a nie w petli!)
+    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
+    if (stan == (void*)-1) {
+        perror("Monitor bramki: blad shmat");
+        return NULL;
+    }
+
     int ostatni_stan_bramki = -1; 
+    int licznik_cykli = 0; // Do odliczania czasu (Heartbeat)
 
-    while (monitor_running) {
-        sleep(2);
+    while (monitor_running) 
+    {
+        usleep(200000); // 0.2 sekundy (5 razy na sekunde)
+        licznik_cykli++;
         
-        StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
-        if (stan == (void*)-1) continue;
-
         int obecny_stan = stan->czy_okienko_2_otwarte;
         int dlugosc = stan->dlugosc_kolejki_rejestracji;
         
-        if (obecny_stan != ostatni_stan_bramki) {
-            
+        // Logika 1: Zmiana stanu
+        if (obecny_stan != ostatni_stan_bramki) 
+        {
             zapisz_raport(RAPORT_2, semid, 
                           "[ZMIANA] Kolejka: %d osob | Okienko 2: %s\n", 
                           dlugosc, 
                           obecny_stan ? "OTWARTE" : "ZAMKNIETE");
-            
             ostatni_stan_bramki = obecny_stan;
         }
-        else if (dlugosc > 15 && obecny_stan == 0) {
+        // Logika 2: Alarmy (tylko powazne)
+        else if (dlugosc > (MAX_PACJENTOW / 2) && obecny_stan == 0) 
+        {
             zapisz_raport(RAPORT_2, semid, 
                           "[ALARM] Kolejka %d osob, a Okienko 2 wciaz ZAMKNIETE!\n", dlugosc);
         }
-
-        shmdt(stan);
+        else if (dlugosc < (MAX_PACJENTOW / 3) && obecny_stan == 1) 
+        {
+            zapisz_raport(RAPORT_2, semid, 
+                          "[ALARM] Kolejka %d osob, a Okienko 2 wciaz OTWARTE!\n", dlugosc);
+        }
+        
+        // NOWOSC: Logika 3 - Heartbeat (co 5 cykli = co 1 sekunde)
+        // Dzieki temu bedziesz widzial, ze kolejka maleje: 587 -> 586 -> 585...
+        if (licznik_cykli % 5 == 0) 
+        {
+             zapisz_raport(RAPORT_2, semid, 
+                          "[STATUS] Kolejka: %d | Okienko 2: %s\n", 
+                          dlugosc, obecny_stan ? "OTWARTE" : "ZAMKNIETE");
+        }
     }
+    
+    shmdt(stan); // Odlaczenie RAZ na koniec
     return NULL;
 }
 
@@ -254,14 +276,19 @@ for(int i=1; i<=6; i++)
         exit(0);
     }
 
-    pid_t pid_gen = uruchom_proces("./generator", "Generator", NULL);
+    
 
     if (pthread_create(&monitor_tid, NULL, watek_monitor_kolejki, NULL) != 0) {
         perror("Nie udalo sie utworzyc watku monitorujacego");
     }
 
     if (pthread_create(&monitor2_tid, NULL, watek_monitor_bramki, NULL) != 0) 
+    {
         perror("Blad tworzenia watku bramki");
+    }
+    
+
+    pid_t pid_gen = uruchom_proces("./generator", "SOR_Generator", NULL);
 
     printf("[MAIN] Symulacja 24h w toku...\n");
     
