@@ -76,7 +76,6 @@ void handle_sig(int sig)
 
 void praca_poz(int msgid_poz)
 {
-    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     KomunikatPacjenta pacjent;   
 
     while(1)
@@ -171,7 +170,6 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
 
     while(1)
     {
-                sleep(2); /////////////////////////////////////////////
 
         if(wezwanie_na_oddzial)
         {
