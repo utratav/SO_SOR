@@ -34,19 +34,21 @@
 #define ID_SEM_SET 'M'
 #define ID_SEM_LIMITS 'X'
 
-#define PACJENCI_NA_DOBE 50000 //max zakres inta
-#define MAX_PACJENTOW 600//max dla sem 32 768
-#define MAX_PROCESOW 500  //ogranicza nas sem
+#define PACJENCI_NA_DOBE 50 //max zakres inta
+#define MAX_PACJENTOW 10//max dla sem 32 768
+#define MAX_PROCESOW 10  //ogranicza nas sem
 #define INT_LIMIT_KOLEJEK 500 // 16384 / (sizeof(KomunikatPacjenta) - sizeof(long)) = 628
 
 #define RAPORT_1 "raport1.txt"
 #define RAPORT_2 "raport2.txt"
+#define RAPORT_3 "raport3.txt"
 #define KONSOLA NULL
 
 #define SEM_DOSTEP_PAMIEC 0
 #define SEM_MIEJSCA_SOR 1
 #define SEM_ZAPIS_PLIK 2   
 #define SEM_GENERATOR 3
+#define SEM_BRAMKA_2 4
 
 #define SLIMIT_REJESTRACJA 0
 #define SLIMIT_POZ         1
@@ -87,10 +89,11 @@ typedef struct {
     int obs_spec[7];       
     int obs_kolory[4];     
     int obs_dom_poz;       
-
     int decyzja[4];   
     
     int symulacja_trwa;
+    int ewakuowani;
+    int dostepni_specjalisci[7];
     
 } StanSOR;
 

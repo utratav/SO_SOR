@@ -58,65 +58,80 @@ int main(int argc, char*argv[])
     unlock.sem_num = SEM_DOSTEP_PAMIEC;
     unlock.sem_op = 1;
 
+    struct sembuf czekaj_na_prace = {SEM_BRAMKA_2, -1, 0}; 
+    struct sembuf oddaj_prace     = {SEM_BRAMKA_2, 1, 0}; 
+
     KomunikatPacjenta pacjent;
+
+    int lokalnie_otwarte = 0;
 
     while(1)
     {
+        sleep(2); /////////////////////////////////////////////
         if (nr_okienka == 1)
         {
-            semop(semid, &lock, 1);
-            int kolejka = stan->dlugosc_kolejki_rejestracji;
-            int otwarte = stan->czy_okienko_2_otwarte;
+            
+            semop(semid, &lock, 1); 
+            
+            int wymagane_otwarcie = stan->czy_okienko_2_otwarte;
+            int dlugosc_kolejki = stan->dlugosc_kolejki_rejestracji;
 
-            if (otwarte && kolejka <= (MAX_PACJENTOW / 3)) 
+       
+            if (wymagane_otwarcie && !lokalnie_otwarte)
+            {
+                lokalnie_otwarte = 1;
+                semop(semid, &oddaj_prace, 1); 
+                zapisz_raport(KONSOLA, semid, "[REJESTRACJA] Wykryto flage od pacjenta -> Otwieram okienko 2.\n");
+            }
+
+            
+            if (lokalnie_otwarte && dlugosc_kolejki <= (MAX_PACJENTOW / 3)) 
             {
                 stan->czy_okienko_2_otwarte = 0;
-                zapisz_raport(KONSOLA, semid, "[REJESTRACJA] Zamykam okienko 2. (Kolejka: %d)\n", kolejka);
-                zapisz_raport(RAPORT_2, semid, "[REJESTRACJA] Zamykam 2 okienko | osob w kolejce: %d\n", kolejka);
+                lokalnie_otwarte = 0;
+
+                semop(semid, &czekaj_na_prace, 1); 
+
+                zapisz_raport(KONSOLA, semid, "[REJESTRACJA] Zamykam okienko 2 (Kolejka: %d)\n", dlugosc_kolejki);
+                zapisz_raport(RAPORT_2, semid, "[REJESTRACJA] Zamykam 2 okienko | osob w kolejce: %d\n", dlugosc_kolejki);
             }
-            semop(semid, &unlock, 1);
+            
+            semop(semid, &unlock, 1); 
         }
 
-        // ---------------------------------------------------------
-        // ROLA PRACOWNIKA DODATKOWEGO (Tylko Okienko 2)
-        // ---------------------------------------------------------
+
         if (nr_okienka == 2)
         {
-            // Sprawdzamy czy mamy pozwolenie na prace
-            semop(semid, &lock, 1);
-            int czy_pracowac = stan->czy_okienko_2_otwarte;
-            semop(semid, &unlock, 1);
-
-            if (!czy_pracowac)
-            {
-                usleep(50000); // Spij 50ms i sprawdz znowu
-                continue;      // Wroc na poczatek petli
+            
+            if (semop(semid, &czekaj_na_prace, 1) == -1) {
+                if (errno == EINTR) continue; 
+                perror("rejestracja 2 - blad semop (czekaj)");
+                exit(1);
             }
+            
         }
 
         int flaga = 0;
         if (nr_okienka == 2) flaga = IPC_NOWAIT;
-
         
         ssize_t status = msgrcv(msgid_we, &pacjent, sizeof(KomunikatPacjenta) - sizeof(long), -2, flaga);
 
         if (status == -1)
         {
-            if (errno == ENOMSG && nr_okienka == 2) {
+           
+            if (nr_okienka == 2 && errno == ENOMSG) {
                 
-                usleep(100000);
-                continue;
+                semop(semid, &oddaj_prace, 1);
+                
+                usleep(10000); 
+                continue; 
             }
+            
             if (errno != EINTR) perror("rejestracja - blad msgrcv");
+            
+            if (nr_okienka == 2) semop(semid, &oddaj_prace, 1);
             continue;
         }
-
-
-        
-
-        //usleep(500000);  
-
-        
 
         pacjent.mtype = pacjent.pacjent_pid; 
         if(msgsnd(msgid_we, &pacjent, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
@@ -129,6 +144,9 @@ int main(int argc, char*argv[])
                 nr_okienka, pacjent.pacjent_pid);
 
         }        
+
+        if (nr_okienka == 2) semop(semid, &oddaj_prace, 1);
+        
 
     }
     

@@ -11,12 +11,55 @@
 
 int semid = -1;
 int semid_limits = -1;
+StanSOR *stan_ptr = NULL;
+volatile int etap_pacjenta = 0;
+
+int sem_op_miejsca = 1;
+int potrzebny_rodzic = 0;
+pthread_t rodzic_thread;
+ unsigned long id_opiekuna = 0; 
+
+#define ETAP_POZA 0
+#define ETAP_W_POCZEKALNI 1
+#define ETAP_PO_REJESTRACJI 2
 
 void handle_sig(int sig)
 {
     if (sig == SIG_EWAKUACJA)
     {
+        if (etap_pacjenta > ETAP_POZA && stan_ptr != NULL)
+        {
+            struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, 0};
+            struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, 0};
+            semop(semid, &lock, 1);
 
+            if (etap_pacjenta == ETAP_W_POCZEKALNI) {
+                if (stan_ptr->dlugosc_kolejki_rejestracji > 0)
+                    stan_ptr->dlugosc_kolejki_rejestracji--;
+            }
+            
+            if (stan_ptr->liczba_pacjentow_w_srodku >= sem_op_miejsca)
+                stan_ptr->liczba_pacjentow_w_srodku -= sem_op_miejsca;
+
+            stan_ptr->ewakuowani++; 
+            
+            semop(semid, &unlock, 1);
+
+            struct sembuf wyjscie = {SEM_MIEJSCA_SOR, 1, 0};
+            semop(semid, &wyjscie, 1);
+
+            if (potrzebny_rodzic) 
+            {                
+                pthread_join(rodzic_thread, NULL);
+                zapisz_raport(KONSOLA, semid, "[pacjent %d] opiekun: %d ewakuowano", getpid(), id_opiekuna);
+            } 
+            else 
+            {
+                zapisz_raport(KONSOLA, semid, "[pacjent %d] ewakuowano", getpid());
+            }
+
+            
+        }
         exit(0);
     }
 }
@@ -106,17 +149,20 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    stan_ptr = (StanSOR*)shmat(shmid, NULL, 0);
     
+
+    etap_pacjenta = ETAP_W_POCZEKALNI;
 
     pid_t mpid = getpid();
     int wiek = rand() % 100;
     int vip = rand() % 100 < 20; //20% szans
 
-    int potrzebny_rodzic = (wiek < 18);
-    int sem_op_miejsca = potrzebny_rodzic ? 2 : 1; 
+    potrzebny_rodzic = (wiek < 18);
+    sem_op_miejsca = potrzebny_rodzic ? 2 : 1; 
 
-    pthread_t rodzic_thread;
-    unsigned long id_opiekuna = 0; 
+    
+    
 
     if (potrzebny_rodzic) 
     {
@@ -222,6 +268,8 @@ int main(int argc, char *argv[])
 
     semop(semid, &mutex_unlock, 1);
 
+    etap_pacjenta = ETAP_PO_REJESTRACJI;
+
 
     
 
@@ -312,6 +360,9 @@ int main(int argc, char *argv[])
     wyjscie_z_poczekalni.sem_flg = SEM_UNDO;
 
     semop(semid, &wyjscie_z_poczekalni, 1);
+
+    etap_pacjenta = ETAP_POZA;
+
     shmdt(stan);
 
     usleep(100000);

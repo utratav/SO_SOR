@@ -10,8 +10,10 @@
 #include <unistd.h>
 #include <string.h>
 int semid = -1;
-int typ_lekarza = 0;    //poz = 0, pozostali specjalisci > 0
+int shmid = -1;
+int typ_lekarza = 0;    
 volatile int wezwanie_na_oddzial = 0;
+
 
 int int_2_msgid(int typ) {
     switch(typ) {
@@ -41,9 +43,9 @@ const char* int_to_lekarz(int typ) {
 
 const char* int_2_skierowanie(int typ) {
     switch(typ) {
-        case 1: return "Pacjent odeslany do domu";
-        case 2: return "Pacjent skierowany na oddzial";
-        case 3: return "Pacjent skierowany do innej placowki";
+        case 1: return "odeslany do domu";
+        case 2: return "skierowany na oddzial";
+        case 3: return "skierowany do innej placowki";
        default: return "blad";
     }
 }
@@ -66,7 +68,7 @@ void handle_sig(int sig)
     }
     else if(sig == SIG_EWAKUACJA)
     {
-        zapisz_raport(KONSOLA, semid, "[lekarz] sygnal ewakuacja\n");
+        zapisz_raport(KONSOLA, semid, "[%s] sygnal ewakuacja\n", int_to_lekarz(typ_lekarza));
         exit(0);
     }
 }
@@ -74,10 +76,13 @@ void handle_sig(int sig)
 
 void praca_poz(int msgid_poz)
 {
+    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     KomunikatPacjenta pacjent;   
 
     while(1)
     {
+                sleep(2); /////////////////////////////////////////////
+
         if(msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0, 0) == -1)
         {
             if (errno != EINTR)
@@ -133,6 +138,8 @@ void praca_poz(int msgid_poz)
 
         pacjent.mtype = pacjent.pacjent_pid;
 
+        zapisz_raport(KONSOLA, semid, "[POZ] Przekazanie Pacjenta %d do %s\n", pacjent.pacjent_pid, int_to_lekarz(pacjent.typ_lekarza));
+
         if(msgsnd(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
         {
             perror("poz - blad wysylania do specjalisty");
@@ -144,21 +151,60 @@ void praca_poz(int msgid_poz)
 
 void praca_specjalista(int typ_lekarza, int msgid_spec)
 {
+    
+    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
+
+    struct sembuf lock;
+    lock.sem_flg = SEM_UNDO;
+    lock.sem_num = SEM_DOSTEP_PAMIEC;
+    lock.sem_op = -1;
+
+    struct sembuf unlock;
+    unlock.sem_flg = SEM_UNDO;
+    unlock.sem_num = SEM_DOSTEP_PAMIEC;
+    unlock.sem_op = 1;
+    
+
     KomunikatPacjenta pacjent;
 
     const char* jaki_lekarz = int_to_lekarz(typ_lekarza);
 
     while(1)
     {
+                sleep(2); /////////////////////////////////////////////
+
         if(wezwanie_na_oddzial)
         {
-            
+            semop(semid, &lock, 1);
+            stan->dostepni_specjalisci[typ_lekarza] = 0;
+            zapisz_raport(RAPORT_3, semid, 
+                    "Kardiolog:\t%d\nNeurolog:\t%d\nLaryngolog:\t%d\nChirurg:\t%d\nOkulista:\t%d\nPediatra:\t%d\n\n\n",
+                stan->dostepni_specjalisci[1],
+                stan->dostepni_specjalisci[2],
+                stan->dostepni_specjalisci[3],
+                stan->dostepni_specjalisci[4],
+                stan->dostepni_specjalisci[5],
+                stan->dostepni_specjalisci[6]);
+            semop(semid, &unlock, 1);
+            zapisz_raport(RAPORT_1, semid, "\n[SIGNAL 2 %s] wezwanie na oddzial\n\n", jaki_lekarz);
             zapisz_raport(KONSOLA, semid, "[SIGNAL 2 %s] wezwanie na oddzial\n", jaki_lekarz);
 
             sleep(10); //NIE USUWAJ  
 
-            
+            semop(semid, &lock, 1);
+            stan->dostepni_specjalisci[typ_lekarza] = 1;
+            zapisz_raport(RAPORT_3, semid, 
+                    "Kardiolog:\t%d\nNeurolog:\t%d\nLaryngolog:\t%d\nChirurg:\t%d\nOkulista:\t%d\nPediatra:\t%d\n\n\n",
+                stan->dostepni_specjalisci[1],
+                stan->dostepni_specjalisci[2],
+                stan->dostepni_specjalisci[3],
+                stan->dostepni_specjalisci[4],
+                stan->dostepni_specjalisci[5],
+                stan->dostepni_specjalisci[6]);
+            semop(semid, &unlock, 1);
+            zapisz_raport(RAPORT_1, semid, "\n[SIGNAL 2 %s] wracam na SOR\n\n", jaki_lekarz);
             zapisz_raport(KONSOLA, semid, "[SIGNAL 2 %s] wracam na SOR\n", jaki_lekarz);
+            
             wezwanie_na_oddzial = 0;
         }
 
@@ -177,8 +223,8 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
         else skierowanie = 3; //do innej placowki
 
         
-        zapisz_raport(KONSOLA, semid, "[%s] %s %s\n", 
-            jaki_lekarz, dialog[typ_lekarza], int_2_skierowanie(skierowanie));
+        zapisz_raport(KONSOLA, semid, "[%s] %s Pacjent %d %s\n", 
+            jaki_lekarz, dialog[typ_lekarza], pacjent.pacjent_pid, int_2_skierowanie(skierowanie));
 
         pacjent.skierowanie = skierowanie;
 
@@ -217,7 +263,9 @@ int main(int argc, char*argv[])
 
     int msgid_poz = msgget(ftok(FILE_KEY, ID_KOLEJKA_POZ), 0);
     semid = semget(ftok(FILE_KEY, ID_SEM_SET), 0, 0); 
+    shmid = shmget(ftok(FILE_KEY, ID_SHM_MEM), 0, 0);
 
+    
 
     
     int msgid_spec[10];
