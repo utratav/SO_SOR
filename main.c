@@ -45,7 +45,7 @@ void przeprowadz_ewakuacje()
         if (stan->ewakuowani == cel_ewakuacji) printf("Status: SUKCES (Wszyscy bezpieczni)\n");
         else printf("Status: UWAGA (Brakuje %d osob - mozliwe ze wlasnie wychodzily)\n", cel_ewakuacji - stan->ewakuowani);
 
-        podsumowanie(stan);
+        
         
         shmdt(stan);
     }

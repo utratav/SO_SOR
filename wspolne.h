@@ -34,9 +34,9 @@
 #define ID_SEM_SET 'M'
 #define ID_SEM_LIMITS 'X'
 
-#define PACJENCI_NA_DOBE 50 //max zakres inta
-#define MAX_PACJENTOW 10//max dla sem 32 768
-#define MAX_PROCESOW 10  //ogranicza nas sem
+#define PACJENCI_NA_DOBE 50000 //max zakres inta
+#define MAX_PACJENTOW 10000//max dla sem 32 768
+#define MAX_PROCESOW 10000  //ogranicza nas sem
 #define INT_LIMIT_KOLEJEK 500 // 16384 / (sizeof(KomunikatPacjenta) - sizeof(long)) = 628
 
 #define RAPORT_1 "raport1.txt"
@@ -192,9 +192,6 @@ static inline void podsumowanie(StanSOR *stan)
            stan->decyzja[3], (int)(0.005 * p + 0.5));
 
 
-
-    printf("rejestracja stan: %d, czy ok 2 otwarte: %d \n", stan->dlugosc_kolejki_rejestracji, stan->czy_okienko_2_otwarte);
-    printf("miejsca w poczekalni: %d \n", stan->liczba_pacjentow_w_srodku);
     printf("==============================================\n");
 }
 

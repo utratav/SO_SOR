@@ -80,7 +80,7 @@ void praca_poz(int msgid_poz)
 
     while(1)
     {
-                sleep(2); /////////////////////////////////////////////
+               // sleep(2); /////////////////////////////////////////////
 
         if(msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0, 0) == -1)
         {

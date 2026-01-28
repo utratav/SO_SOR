@@ -95,8 +95,7 @@ int main(int argc, char *argv[])
     signal(SIG_EWAKUACJA, handle_sig); 
     srand(time(NULL) ^ getpid());
 
-    int czeka_na_rejestracje = 1;
-    int w_poczekalni = 1;
+    
 
     key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
     key_t key_limits = ftok(FILE_KEY, ID_SEM_LIMITS);
@@ -291,7 +290,7 @@ int main(int argc, char *argv[])
     }
     unlock(SLIMIT_POZ);
 
-   if (msg.typ_lekarza > 0)
+   if (msg.typ_lekarza > 0) 
     {
         int id_spec = msg.typ_lekarza;
         msg.mtype = msg.kolor; 

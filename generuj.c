@@ -4,6 +4,7 @@
 
 
 int semid = -1;
+volatile sig_atomic_t ewakuacja = 0;
 
 void handle_sigchld(int sig)
 {
@@ -22,6 +23,11 @@ void handle_sigchld(int sig)
     errno = pam_errno;
 }
 
+void handle_ewakuacja(int sig)
+{
+    ewakuacja = 1;
+}
+
 int main(int argc, char* argv[])
 {
     struct sigaction sa;
@@ -29,6 +35,12 @@ int main(int argc, char* argv[])
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
     sigaction(SIGCHLD, &sa, NULL);
+
+    struct sigaction sa_ewak;
+    sa_ewak.sa_handler = handle_ewakuacja;
+    sigemptyset(&sa_ewak.sa_mask);
+    sa_ewak.sa_flags = 0; 
+    sigaction(SIG_EWAKUACJA, &sa_ewak, NULL);
 
     key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
     semid = semget(key_sem, 0, 0);
@@ -43,12 +55,24 @@ int main(int argc, char* argv[])
 
     for (int i = 0; i < PACJENCI_NA_DOBE; i++)
     {
+        if (ewakuacja) break;
+
         struct sembuf zajmij = {SEM_GENERATOR, -1, SEM_UNDO};
         
         if (semop(semid, &zajmij, 1) == -1)
         {
-            if (errno == EINTR) { i--; continue; }
-            perror("generator: semop error");
+            if (errno == EINTR) { 
+                if (ewakuacja) break; // Jeśli przerwał nas sygnał ewakuacji -> koniec
+                i--; continue; 
+                perror("generator: semop error");
+                break;
+            }
+        }
+
+        if (ewakuacja) 
+        {
+            struct sembuf oddaj = {SEM_GENERATOR, 1, 0};
+            semop(semid, &oddaj, 1);
             break;
         }
 
@@ -71,8 +95,20 @@ int main(int argc, char* argv[])
 
     zapisz_raport(KONSOLA, semid, "[GENERATOR] Wszyscy pacjenci wygenerowani. Czekam na wyjscie ostatnich osob...\n");
 
-    while (wait(NULL) > 0);
+    pid_t wpid;
+    while (1) {
+        wpid = wait(NULL);
+        if (wpid == -1) {
+            if (errno == EINTR) continue; 
+            if (errno == ECHILD) break;   
+            break; 
+        }
+    }
 
     zapisz_raport(KONSOLA, semid, "[GENERATOR] Koniec pracy generatora.\n");
     return 0;
 }
+
+
+
+//pkill -SIGUSR2 -f SOR_SPEC
