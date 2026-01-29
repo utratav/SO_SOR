@@ -34,10 +34,10 @@
 #define ID_SEM_SET 'M'
 #define ID_SEM_LIMITS 'X'
 
-#define PACJENCI_NA_DOBE 50 //max zakres inta
-#define MAX_PACJENTOW 10//max dla sem 32 768
-#define MAX_PROCESOW 10  //ogranicza nas sem
-#define INT_LIMIT_KOLEJEK 500 // 16384 / (sizeof(KomunikatPacjenta) - sizeof(long)) = 628
+#define PACJENCI_NA_DOBE 1000
+#define MAX_PACJENTOW 100
+#define MAX_PROCESOW 100
+#define INT_LIMIT_KOLEJEK 500
 
 #define RAPORT_1 "raport1.txt"
 #define RAPORT_2 "raport2.txt"
@@ -113,11 +113,66 @@ union semun {
     unsigned short *array;
 };
 
+/* =============================================================
+ * POMOCNICZE FUNKCJE DO BEZPIECZNEJ OBSLUGI SYGNALOW (EINTR)
+ * =============================================================
+ */
+
+/* Bezpieczna operacja semop z obsługą EINTR i ewakuacji 
+ * Zwraca: 0 = sukces, -1 = błąd, -2 = przerwano przez ewakuację */
+static inline int safe_semop(int semid, struct sembuf *sops, size_t nsops, 
+                              volatile sig_atomic_t *ewakuacja_flaga) {
+    while (semop(semid, sops, nsops) == -1) {
+        if (errno == EINTR) {
+            if (ewakuacja_flaga && *ewakuacja_flaga) {
+                return -2;
+            }
+            continue;
+        }
+        return -1;
+    }
+    return 0;
+}
+
+/* Bezpieczne msgsnd z obsługą EINTR i EAGAIN */
+static inline int safe_msgsnd(int msgid, const void *msgp, size_t msgsz, int msgflg,
+                               volatile sig_atomic_t *ewakuacja_flaga) {
+    while (msgsnd(msgid, msgp, msgsz, msgflg) == -1) {
+        if (errno == EINTR) {
+            if (ewakuacja_flaga && *ewakuacja_flaga) {
+                return -2;
+            }
+            continue;
+        }
+        if (errno == EAGAIN) {
+            usleep(10000);
+            continue;
+        }
+        return -1;
+    }
+    return 0;
+}
+
+/* Bezpieczne msgrcv z obsługą EINTR */
+static inline ssize_t safe_msgrcv(int msgid, void *msgp, size_t msgsz, long msgtyp, int msgflg,
+                                   volatile sig_atomic_t *ewakuacja_flaga) {
+    ssize_t ret;
+    while ((ret = msgrcv(msgid, msgp, msgsz, msgtyp, msgflg)) == -1) {
+        if (errno == EINTR) {
+            if (ewakuacja_flaga && *ewakuacja_flaga) {
+                return -2;
+            }
+            continue;
+        }
+        return -1;
+    }
+    return ret;
+}
+
 
 static inline void zapisz_raport(const char* filename, int semid, const char* format, ...) {
     va_list args;
 
- 
     if (filename == KONSOLA) {
         struct sembuf lock = {SEM_ZAPIS_PLIK, -1, SEM_UNDO};
         struct sembuf unlock = {SEM_ZAPIS_PLIK, 1, SEM_UNDO};
@@ -136,8 +191,6 @@ static inline void zapisz_raport(const char* filename, int semid, const char* fo
             if (errno != EINTR) break;
         }
     }
-    
-    
     else {
         FILE *f = fopen(filename, "a");
         if (f) {
@@ -191,10 +244,9 @@ static inline void podsumowanie(StanSOR *stan)
     printf("Do innej placowki:     %d (oczekiwano ok.: %d)\n", 
            stan->decyzja[3], (int)(0.005 * p + 0.5));
 
-
-
-    printf("rejestracja stan: %d, czy ok 2 otwarte: %d \n", stan->dlugosc_kolejki_rejestracji, stan->czy_okienko_2_otwarte);
+    printf("\nrejestracja stan: %d, czy ok 2 otwarte: %d \n", stan->dlugosc_kolejki_rejestracji, stan->czy_okienko_2_otwarte);
     printf("miejsca w poczekalni: %d \n", stan->liczba_pacjentow_w_srodku);
+    printf("ewakuowani: %d\n", stan->ewakuowani);
     printf("==============================================\n");
 }
 

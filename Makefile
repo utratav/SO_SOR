@@ -30,4 +30,6 @@ clean:
 
 
 ipc_clean:
-	ipcrm -a
+	ipcs -m | grep `whoami` | awk '{print $$2}' | xargs -r ipcrm -m || true
+	ipcs -s | grep `whoami` | awk '{print $$2}' | xargs -r ipcrm -s || true
+	ipcs -q | grep `whoami` | awk '{print $$2}' | xargs -r ipcrm -q || true
