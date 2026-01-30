@@ -15,10 +15,8 @@ int semid = -1;
 int semid_limits = -1;
 StanSOR *stan_ptr = NULL;
 
-/* Globalna flaga ewakuacji - ustawiana przez handler sygnału */
 volatile sig_atomic_t ewakuacja_trwa = 0;
 
-/* Ile miejsc zajmuje pacjent (1 lub 2 z opiekunem) - używane jako kod wyjścia */
 int sem_op_miejsca = 1;
 int potrzebny_rodzic = 0;
 pthread_t rodzic_thread;
@@ -30,7 +28,6 @@ unsigned long id_opiekuna = 0;
 
 volatile int etap_pacjenta = ETAP_POZA;
 
-/* Handler sygnału ewakuacji - tylko ustawia flagę */
 void handle_ewakuacja(int sig)
 {
     if (sig == SIG_EWAKUACJA) {
@@ -38,24 +35,19 @@ void handle_ewakuacja(int sig)
     }
 }
 
-/* Funkcja czyszcząca wywoływana przy ewakuacji 
- * Pacjent przekazuje informację o zajętych miejscach przez kod wyjścia _exit() */
+
 void wykonaj_ewakuacje(void)
 {
-    /* Dołączamy wątek opiekuna jeśli istnieje */
     if (potrzebny_rodzic) {
         pthread_join(rodzic_thread, NULL);
     }
     
-    /* _exit zamiast exit - bezpieczniejsze w kontekście sygnałów
-     * Kod wyjścia = liczba zajętych miejsc (1 lub 2)
-     * Generator zbierze te wartości przez WEXITSTATUS */
+    
     _exit(sem_op_miejsca);
 }
 
 void* watek_rodzic(void* arg)
 {
-    /* Wątek opiekuna - może czekać na flagę ewakuacji */
     while (!ewakuacja_trwa) {
         usleep(100000);
     }
@@ -84,7 +76,7 @@ void unlock(int sem_indeks)
     
     while (semop(semid_limits, &operacja, 1) == -1) {
         if (errno == EINTR) {
-            continue; /* Przy unlock nie przerywamy */
+            continue; 
         }
         perror("unlock: blad semop");
         break;
@@ -93,10 +85,8 @@ void unlock(int sem_indeks)
 
 int main(int argc, char *argv[])
 {
-    /* KRYTYCZNE: Ignorujemy SIGINT - tylko main go obsługuje */
     signal(SIGINT, SIG_IGN);
     
-    /* Ustawiamy handler dla SIG_EWAKUACJA */
     struct sigaction sa;
     sa.sa_handler = handle_ewakuacja;
     sigemptyset(&sa.sa_mask);
@@ -229,31 +219,45 @@ int main(int argc, char *argv[])
     msg.pacjent_pid = mpid;
     msg.czy_vip = vip;
 
+    sigset_t oldmask_rej;
+    block_sigtstp(&oldmask_rej);
+
     lock(SLIMIT_REJESTRACJA);
-    
-    if (ewakuacja_trwa) {
-        unlock(SLIMIT_REJESTRACJA);
-        wykonaj_ewakuacje();
+
+    if (ewakuacja_trwa) 
+    {
+    unlock(SLIMIT_REJESTRACJA);
+    restore_sigmask(&oldmask_rej);
+    wykonaj_ewakuacje();
     }
 
-    /* Wysyłanie do rejestracji z obsługą EINTR */
-    while (msgsnd(rej_msgid, &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1) {
-        if (errno == EINTR) {
-            if (ewakuacja_trwa) {
-                unlock(SLIMIT_REJESTRACJA);
-                wykonaj_ewakuacje();
-            }
-            continue;
+/* Wysyłanie do rejestracji z obsługą EINTR */
+while (msgsnd(rej_msgid, &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1) 
+{
+    if (errno == EINTR) 
+    {
+        if (ewakuacja_trwa) 
+        {
+            unlock(SLIMIT_REJESTRACJA);
+            restore_sigmask(&oldmask_rej);
+            wykonaj_ewakuacje();
         }
-        if (errno == EAGAIN) { usleep(10000); continue; }
-        perror("blad wysylania do rejestracji");
-        _exit(sem_op_miejsca);
+        continue;
     }
+    perror("blad wysylania do rejestracji");
+    restore_sigmask(&oldmask_rej);
+    _exit(sem_op_miejsca);
+}
+
+restore_sigmask(&oldmask_rej);
 
     /* Odbieranie odpowiedzi z obsługą EINTR */
-    while (msgrcv(rej_msgid, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1) {
-        if (errno == EINTR) {
-            if (ewakuacja_trwa) {
+    while (msgrcv(rej_msgid, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1) 
+    {
+        if (errno == EINTR) 
+        {
+            if (ewakuacja_trwa) 
+            {
                 unlock(SLIMIT_REJESTRACJA);
                 wykonaj_ewakuacje();
             }
@@ -265,8 +269,10 @@ int main(int argc, char *argv[])
     unlock(SLIMIT_REJESTRACJA);
 
     /* Aktualizacja kolejki rejestracji */
-    while (semop(semid, &mutex_lock, 1) == -1) {
-        if (errno == EINTR) {
+    while (semop(semid, &mutex_lock, 1) == -1)
+     {
+        if (errno == EINTR) 
+        {
             if (ewakuacja_trwa) wykonaj_ewakuacje();
             continue;
         }
@@ -279,31 +285,45 @@ int main(int argc, char *argv[])
 
     if (ewakuacja_trwa) wykonaj_ewakuacje();
 
-    /* === POZ === */
-    msg.mtype = 1;
-    lock(SLIMIT_POZ);
-    
-    if (ewakuacja_trwa) {
-        unlock(SLIMIT_POZ);
-        wykonaj_ewakuacje();
-    }
+    msg.mtype = vip ? TYP_VIP : TYP_ZWYKLY;   // <- poprawka VIP (patrz też punkt 4 niżej)
 
-    while (msgsnd(poz_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1) {
-        if (errno == EINTR) {
-            if (ewakuacja_trwa) {
-                unlock(SLIMIT_POZ);
-                wykonaj_ewakuacje();
-            }
-            continue;
+sigset_t oldmask_poz;
+block_sigtstp(&oldmask_poz);
+
+lock(SLIMIT_POZ);
+
+if (ewakuacja_trwa) 
+{
+    unlock(SLIMIT_POZ);
+    restore_sigmask(&oldmask_poz);
+    wykonaj_ewakuacje();
+}
+
+while (msgsnd(poz_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1) 
+{
+    if (errno == EINTR) 
+    {
+        if (ewakuacja_trwa) 
+        {
+            unlock(SLIMIT_POZ);
+            restore_sigmask(&oldmask_poz);
+            wykonaj_ewakuacje();
         }
-        if (errno == EAGAIN) { usleep(10000); continue; }
-        perror("blad msgsnd wysylania do poz");
-        _exit(sem_op_miejsca);
+        continue;
     }
+    perror("blad msgsnd wysylania do poz");
+    restore_sigmask(&oldmask_poz);
+    _exit(sem_op_miejsca);
+}
 
-    while (msgrcv(poz_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1) {
-        if (errno == EINTR) {
-            if (ewakuacja_trwa) {
+restore_sigmask(&oldmask_poz);
+
+    while (msgrcv(poz_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1) 
+    {
+        if (errno == EINTR)
+         {
+            if (ewakuacja_trwa) 
+            {
                 unlock(SLIMIT_POZ);
                 wykonaj_ewakuacje();
             }
@@ -317,12 +337,14 @@ int main(int argc, char *argv[])
     if (ewakuacja_trwa) wykonaj_ewakuacje();
 
     /* === SPECJALISTA (jeśli potrzebny) === */
-    if (msg.typ_lekarza > 0) {
+    if (msg.typ_lekarza > 0) 
+    {
         int id_spec = msg.typ_lekarza;
         msg.mtype = msg.kolor;
         int sem_limit_indeks = -1;
 
-        switch (id_spec) {
+        switch (id_spec) 
+        {
             case LEK_KARDIOLOG:  sem_limit_indeks = SLIMIT_KARDIOLOG; break;
             case LEK_NEUROLOG:   sem_limit_indeks = SLIMIT_NEUROLOG; break;
             case LEK_LARYNGOLOG: sem_limit_indeks = SLIMIT_LARYNGOLOG; break;
@@ -332,30 +354,48 @@ int main(int argc, char *argv[])
             default: break;
         }
 
-        if (sem_limit_indeks != -1) {
-            lock(sem_limit_indeks);
+        if (sem_limit_indeks != -1) 
+        {
             
-            if (ewakuacja_trwa) {
-                unlock(sem_limit_indeks);
-                wykonaj_ewakuacje();
-            }
+                        sigset_t oldmask_spec;
+                block_sigtstp(&oldmask_spec);
 
-            while (msgsnd(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1) {
-                if (errno == EINTR) {
-                    if (ewakuacja_trwa) {
-                        unlock(sem_limit_indeks);
-                        wykonaj_ewakuacje();
-                    }
-                    continue;
+                lock(sem_limit_indeks);
+
+                if (ewakuacja_trwa)
+                 {
+                    unlock(sem_limit_indeks);
+                    restore_sigmask(&oldmask_spec);
+                    wykonaj_ewakuacje();
                 }
-                if (errno == EAGAIN) { usleep(10000); continue; }
-                perror("blad wysylania do specjalisty");
-                _exit(sem_op_miejsca);
+
+            while (msgsnd(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1) 
+            {
+                    if (errno == EINTR) 
+                    {
+                        if (ewakuacja_trwa) 
+                        {
+                            unlock(sem_limit_indeks);
+                            restore_sigmask(&oldmask_spec);
+                            wykonaj_ewakuacje();
+                        }
+                        continue;
+                    }
+                    perror("blad wysylania do specjalisty");
+                    restore_sigmask(&oldmask_spec);
+                    _exit(sem_op_miejsca);
             }
 
-            while (msgrcv(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1) {
-                if (errno == EINTR) {
-                    if (ewakuacja_trwa) {
+                restore_sigmask(&oldmask_spec);
+            
+            
+
+            while (msgrcv(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1) 
+            {
+                if (errno == EINTR) 
+                {
+                    if (ewakuacja_trwa) 
+                    {
                         unlock(sem_limit_indeks);
                         wykonaj_ewakuacje();
                     }

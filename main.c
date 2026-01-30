@@ -28,52 +28,98 @@ void* watek_monitor_kolejki(void* arg)
 {
     FILE *f = fopen(RAPORT_1, "w");
     if (f) {
-        fprintf(f, "CZAS;KOLEJKA;WOLNE_SEM;ZAJETE_SEM;MSG_COUNT\n");
+        fprintf(f, "CZAS;TYP;NAZWA;WOLNE;ZAJETE;WAITING;MSG_QNUM;MSG_QBYTES;LRPID;LSPID\n");
         fclose(f);
     }
 
-    struct msqid_ds buf;
+    struct msqid_ds qbuf;
+
     while (monitor_running) {
-        usleep(1000000);
+        
 
+        time_t now = time(NULL);
+        char t_str[64];
+        ctime_r(&now, t_str);
+        t_str[strlen(t_str)-1] = '\0';
+
+        if (semid != -1) {
+            int free_places = semctl(semid, SEM_MIEJSCA_SOR, GETVAL, 0);
+            int wait_places = semctl(semid, SEM_MIEJSCA_SOR, GETNCNT, 0);
+            if (free_places >= 0 && wait_places >= 0) {
+                int used_places = MAX_PACJENTOW - free_places;
+                zapisz_raport(RAPORT_1, semid,
+                    "%s;SEM_GLOBAL;MIEJSCA_SOR;%d;%d;%d;-;-;-;-\n",
+                    t_str, free_places, used_places, wait_places);
+            }
+
+            int free_gen = semctl(semid, SEM_GENERATOR, GETVAL, 0);
+            int wait_gen = semctl(semid, SEM_GENERATOR, GETNCNT, 0);
+            if (free_gen >= 0 && wait_gen >= 0) {
+                int used_gen = MAX_PROCESOW - free_gen;
+                zapisz_raport(RAPORT_1, semid,
+                    "%s;SEM_GLOBAL;GENERATOR;%d;%d;%d;-;-;-;-\n",
+                    t_str, free_gen, used_gen, wait_gen);
+            }
+
+            int free_shm = semctl(semid, SEM_DOSTEP_PAMIEC, GETVAL, 0);
+            int wait_shm = semctl(semid, SEM_DOSTEP_PAMIEC, GETNCNT, 0);
+            if (free_shm >= 0 && wait_shm >= 0) {
+                int used_shm = 1 - free_shm;
+                if (used_shm < 0) used_shm = 0;
+                zapisz_raport(RAPORT_1, semid,
+                    "%s;SEM_GLOBAL;SHM_MUTEX;%d;%d;%d;-;-;-;-\n",
+                    t_str, free_shm, used_shm, wait_shm);
+            }
+
+            
+        }
+
+        unsigned short stany[LICZBA_SLIMITS];
         if (semid_limits != -1) {
-            unsigned short stany[LICZBA_SLIMITS];
-            union semun arg;
-            arg.array = stany;
+            union semun u;
+            u.array = stany;
 
-            if (semctl(semid_limits, 0, GETALL, arg) != -1) {
-                time_t now = time(NULL);
-                char *t_str = ctime(&now);
-                t_str[strlen(t_str)-1] = '\0';
-
-                int wolne_sor = semctl(semid, SEM_MIEJSCA_SOR, GETVAL, 0);
-                if (wolne_sor != -1) {
-                    zapisz_raport(RAPORT_1, semid,
-                        "%s;GLOWNY_HOL_SOR;%d;%d;-\n",
-                        t_str, wolne_sor, MAX_PACJENTOW - wolne_sor);
-                }
-
+            if (semctl(semid_limits, 0, GETALL, u) != -1) {
                 for (int i = 0; i < LICZBA_SLIMITS; i++) {
-                    int zajete_sem = INT_LIMIT_KOLEJEK - stany[i];
-                    int faktyczne_msg = -1;
+                    int free_lim = stany[i];
+                    int used_lim = INT_LIMIT_KOLEJEK - free_lim;
+                    int wait_lim = semctl(semid_limits, i, GETNCNT, 0);
 
-                    if (msgs_ids[i] != -1) {
-                        if (msgctl(msgs_ids[i], IPC_STAT, &buf) == 0) {
-                            faktyczne_msg = buf.msg_qnum;
-                        }
-                    }
+                    if (wait_lim < 0) wait_lim = -1;
 
-                    if (zajete_sem > 0 || faktyczne_msg > 0) {
-                        zapisz_raport(RAPORT_1, semid,
-                            "%s;%s;%d;%d;%d\n",
-                            t_str, nazwy_kolejek[i],
-                            stany[i], zajete_sem, faktyczne_msg);
-                    }
+                    zapisz_raport(RAPORT_1, semid,
+                        "%s;SEM_LIMIT;%s;%d;%d;%d;-;-;-;-\n",
+                        t_str, nazwy_kolejek[i], free_lim, used_lim, wait_lim);
                 }
-                zapisz_raport(RAPORT_1, semid, "---\n");
             }
         }
+
+        for (int i = 0; i < LICZBA_SLIMITS; i++) {
+            if (msgs_ids[i] == -1) continue;
+
+            if (msgctl(msgs_ids[i], IPC_STAT, &qbuf) == 0) {
+              
+                zapisz_raport(RAPORT_1, semid,
+                    "%s;MSGQ;%s;-;-;-;%lu;%lu;%d;%d\n",
+                    t_str,
+                    nazwy_kolejek[i],
+                    (unsigned long)qbuf.msg_qnum,
+                    (unsigned long)qbuf.msg_qbytes,
+                    (int)qbuf.msg_lrpid,
+                    (int)qbuf.msg_lspid
+                );
+            } else {
+                zapisz_raport(RAPORT_1, semid,
+                    "%s;MSGQ;%s;-;-;-;-;-;-;-\n",
+                    t_str, nazwy_kolejek[i]);
+            }
+        }
+
+        zapisz_raport(RAPORT_1, semid, "%s;SEP;---;-;-;-;-;-;-;-\n", t_str);
+
+        usleep(1000000);
     }
+
     return NULL;
 }
 

@@ -79,7 +79,7 @@ void praca_poz(int msgid_poz)
 
         if (ewakuacja_trwa) break;
 
-        ssize_t ret = msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0, 0);
+        ssize_t ret = msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), -2, 0);
         if (ret == -1) {
             if (errno == EINTR) {
                 if (ewakuacja_trwa) break;
@@ -90,8 +90,7 @@ void praca_poz(int msgid_poz)
         }
 
         if (ewakuacja_trwa) break;
-
-        zapisz_raport(KONSOLA, semid, "[POZ] wykonuje podstawowe badania na pacjencie %d, nadaje priorytet\n", pacjent.pacjent_pid);
+ 
 
         int chory = 1;
         int r = rand() % 100;
@@ -122,14 +121,23 @@ void praca_poz(int msgid_poz)
 
         zapisz_raport(KONSOLA, semid, "[POZ] Przekazanie Pacjenta %d do %s\n", pacjent.pacjent_pid, int_to_lekarz(pacjent.typ_lekarza));
 
-        while (msgsnd(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1) {
-            if (errno == EINTR) {
-                if (ewakuacja_trwa) goto koniec_poz;
-                continue;
-            }
-            perror("poz - blad wysylania do specjalisty");
-            break;
-        }
+        for (;;) {
+    if (msgsnd(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), IPC_NOWAIT) == 0)
+        break;
+
+    if (errno == EINTR) {
+        if (ewakuacja_trwa) goto koniec_poz;
+        continue;
+    }
+    if (errno == EAGAIN) {
+        // kolejka pełna -> krótkie odczekanie i ponów
+        usleep(1000);
+        continue;
+    }
+    perror("poz - blad wysylania reply");
+    break;
+}
+
     }
 
 koniec_poz:
@@ -168,10 +176,7 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
             zapisz_raport(KONSOLA, semid, "[SIGNAL 2 %s] wezwanie na oddzial\n", jaki_lekarz);
 
             /* Czekamy na oddziale - sprawdzamy ewakuację */
-            for (int i = 0; i < 10 && !ewakuacja_trwa; i++) {
-                sleep(1);
-            }
-
+            pause();
             if (ewakuacja_trwa) goto koniec_spec;
 
             while (semop(semid, &lock, 1) == -1) {
@@ -220,14 +225,19 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
         pacjent.skierowanie = skierowanie;
         pacjent.mtype = pacjent.pacjent_pid;
 
-        while (msgsnd(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1) {
-            if (errno == EINTR) {
-                if (ewakuacja_trwa) goto koniec_spec;
-                continue;
-            }
-            perror("specjalista - blad msgsnd");
-            break;
-        }
+        for (;;) {
+    if (msgsnd(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), IPC_NOWAIT) == 0)
+        break;
+
+    if (errno == EINTR) {
+        if (ewakuacja_trwa) goto koniec_spec;
+        continue;
+    }
+    if (errno == EAGAIN) { usleep(1000); continue; }
+    perror("specjalista - blad msgsnd (reply)");
+    break;
+}
+
     }
 
 koniec_spec:

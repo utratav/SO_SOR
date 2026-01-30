@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -pthread
 
-TARGETS = main pacjent lekarz rejestracja generator
+TARGETS = main pacjent lekarz rejestracja generuj
 
 
 all: $(TARGETS)
@@ -9,7 +9,7 @@ all: $(TARGETS)
 
 
 main: main.c wspolne.h
-	$(CC) $(CFLAGS) -o main main.c
+	$(CC) $(CFLAGS) -o main main.c -lpthread
 
 pacjent: pacjent.c wspolne.h
 	$(CC) $(CFLAGS) -o pacjent pacjent.c -lpthread
