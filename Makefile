@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -pthread
 
-TARGETS = main pacjent lekarz rejestracja generuj
+TARGETS = main pacjent lekarz rejestracja generator
 
 
 all: $(TARGETS)

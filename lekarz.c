@@ -1,4 +1,4 @@
-#define _DEFAULT_SOURCE
+#define _GNU_SOURCE
 
 #include "wspolne.h"
 #include <stdlib.h>
@@ -12,10 +12,9 @@
 
 int semid = -1;
 int shmid = -1;
-int typ_lekarza = 0;
-
+int typ_lekarza = 0;    
 volatile sig_atomic_t wezwanie_na_oddzial = 0;
-volatile sig_atomic_t ewakuacja_trwa = 0;
+volatile sig_atomic_t koniec_pracy = 0;
 
 int int_2_msgid(int typ) {
     switch(typ) {
@@ -53,67 +52,86 @@ const char* int_2_skierowanie(int typ) {
 }
 
 const char* dialog[7] = {
-    "",
-    "pobieram probke krwi...",
-    "podpinam diody do mozgu...",
-    "badam uszy...",
-    "przeprowadzam operacje...",
-    "badam oczy...",
-    "badam malego pacjenta..."
+    "",                               
+    "pobieram probke krwi...",        // 1 - Kardiolog
+    "podpinam diody do mozgu...",     // 2 - Neurolog
+    "badam uszy...",                  // 3 - Laryngolog
+    "przeprowadzam operacje...",      // 4 - Chirurg
+    "badam oczy...",                  // 5 - Okulista
+    "badam malego pacjenta..."        // 6 - Pediatra
 };
 
 void handle_sig(int sig)
 {
-    if (sig == SIG_LEKARZ_ODDZIAL) {
+    if(sig == SIG_LEKARZ_ODDZIAL)
+    {
         wezwanie_na_oddzial = 1;
-    } else if (sig == SIG_EWAKUACJA) {
-        ewakuacja_trwa = 1;
+    }
+    else if(sig == SIGTERM)
+    {
+        // SIGTERM = koniec pracy (wysyłany przez main przy ewakuacji/zamknięciu)
+        zapisz_raport(KONSOLA, semid, "[%s] Otrzymano sygnal zakonczenia pracy.\n", int_to_lekarz(typ_lekarza));
+        koniec_pracy = 1;
     }
 }
 
 void praca_poz(int msgid_poz)
 {
-    KomunikatPacjenta pacjent;
+    KomunikatPacjenta pacjent;   
 
-    while (!ewakuacja_trwa) {
+    while(!koniec_pracy)
+    {
+        
 
-        if (ewakuacja_trwa) break;
-
-        ssize_t ret = msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), -2, 0);
-        if (ret == -1) {
-            if (errno == EINTR) {
-                if (ewakuacja_trwa) break;
+        if(msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0, IPC_NOWAIT) == -1)
+        {
+            if (errno == ENOMSG) {
+                usleep(100000);
                 continue;
             }
+            if (errno == EINTR) continue;
             perror("poz - blad msgrcv");
             continue;
-        }
+        } 
 
-        if (ewakuacja_trwa) break;
- 
+        zapisz_raport(KONSOLA, semid,"[POZ] wykonuje podstawowe badania na pacjencie %d, nadaje priorytet\n", pacjent.pacjent_pid);
 
         int chory = 1;
         int r = rand() % 100;
-        if (r < 10) {
+        if (r < 10) 
+        {
             pacjent.kolor = CZERWONY;
-        } else if (r < 45) {
+        }
+        else if (r < 45)
+        {
             pacjent.kolor = ZOLTY;
-        } else if (r < 95) {
+        }
+        else if (r < 95)
+        {
             pacjent.kolor = ZIELONY;
-        } else {
+        }
+        else
+        {
             chory = 0;
             pacjent.typ_lekarza = 0;
-            pacjent.skierowanie = 1;
+            pacjent.skierowanie = 1;  
+            
             zapisz_raport(KONSOLA, semid, "[POZ] Pacjent %d zdrowy - odeslany do domu\n", pacjent.pacjent_pid);
         }
 
-        if (chory) {
+        if (chory)
+        {
             int id_specjalisty;
-            if (pacjent.wiek < 18) {
-                id_specjalisty = LEK_PEDIATRA;
-            } else {
-                id_specjalisty = (rand() % 5) + 1;
+
+            if (pacjent.wiek < 18)
+            {
+                id_specjalisty = LEK_PEDIATRA; 
             }
+            else
+            {
+                id_specjalisty = (rand() % 5) + 1; 
+            }
+            
             pacjent.typ_lekarza = id_specjalisty;
         }
 
@@ -121,27 +139,12 @@ void praca_poz(int msgid_poz)
 
         zapisz_raport(KONSOLA, semid, "[POZ] Przekazanie Pacjenta %d do %s\n", pacjent.pacjent_pid, int_to_lekarz(pacjent.typ_lekarza));
 
-        for (;;) {
-    if (msgsnd(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), IPC_NOWAIT) == 0)
-        break;
-
-    if (errno == EINTR) {
-        if (ewakuacja_trwa) goto koniec_poz;
-        continue;
+        if(msgsnd(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
+        {
+            if (errno != EINTR)
+                perror("poz - blad wysylania do specjalisty");
+        }
     }
-    if (errno == EAGAIN) {
-        // kolejka pełna -> krótkie odczekanie i ponów
-        usleep(1000);
-        continue;
-    }
-    perror("poz - blad wysylania reply");
-    break;
-}
-
-    }
-
-koniec_poz:
-    zapisz_raport(KONSOLA, semid, "[POZ] sygnal ewakuacja - koncze prace\n");
 }
 
 void praca_specjalista(int typ_lekarza, int msgid_spec)
@@ -154,137 +157,130 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
     KomunikatPacjenta pacjent;
     const char* jaki_lekarz = int_to_lekarz(typ_lekarza);
 
-    while (!ewakuacja_trwa) {
-        /* Obsługa wezwania na oddział */
-        if (wezwanie_na_oddzial) {
-            while (semop(semid, &lock, 1) == -1) {
-                if (errno == EINTR) {
-                    if (ewakuacja_trwa) goto koniec_spec;
-                    continue;
-                }
-                break;
-            }
+    while(!koniec_pracy)
+    {
+        if(wezwanie_na_oddzial)
+        {
+            semop(semid, &lock, 1);
             stan->dostepni_specjalisci[typ_lekarza] = 0;
-            zapisz_raport(RAPORT_3, semid,
-                "Kardiolog:\t%d\nNeurolog:\t%d\nLaryngolog:\t%d\nChirurg:\t%d\nOkulista:\t%d\nPediatra:\t%d\n\n\n",
-                stan->dostepni_specjalisci[1], stan->dostepni_specjalisci[2],
-                stan->dostepni_specjalisci[3], stan->dostepni_specjalisci[4],
-                stan->dostepni_specjalisci[5], stan->dostepni_specjalisci[6]);
+            zapisz_raport(RAPORT_3, semid, 
+                    "Kardiolog:\t%d\nNeurolog:\t%d\nLaryngolog:\t%d\nChirurg:\t%d\nOkulista:\t%d\nPediatra:\t%d\n\n\n",
+                stan->dostepni_specjalisci[1],
+                stan->dostepni_specjalisci[2],
+                stan->dostepni_specjalisci[3],
+                stan->dostepni_specjalisci[4],
+                stan->dostepni_specjalisci[5],
+                stan->dostepni_specjalisci[6]);
             semop(semid, &unlock, 1);
-
             zapisz_raport(RAPORT_1, semid, "\n[SIGNAL 2 %s] wezwanie na oddzial\n\n", jaki_lekarz);
             zapisz_raport(KONSOLA, semid, "[SIGNAL 2 %s] wezwanie na oddzial\n", jaki_lekarz);
 
-            /* Czekamy na oddziale - sprawdzamy ewakuację */
-            pause();
-            if (ewakuacja_trwa) goto koniec_spec;
+            sleep(10);
 
-            while (semop(semid, &lock, 1) == -1) {
-                if (errno == EINTR) {
-                    if (ewakuacja_trwa) goto koniec_spec;
-                    continue;
-                }
-                break;
-            }
+            semop(semid, &lock, 1);
             stan->dostepni_specjalisci[typ_lekarza] = 1;
-            zapisz_raport(RAPORT_3, semid,
-                "Kardiolog:\t%d\nNeurolog:\t%d\nLaryngolog:\t%d\nChirurg:\t%d\nOkulista:\t%d\nPediatra:\t%d\n\n\n",
-                stan->dostepni_specjalisci[1], stan->dostepni_specjalisci[2],
-                stan->dostepni_specjalisci[3], stan->dostepni_specjalisci[4],
-                stan->dostepni_specjalisci[5], stan->dostepni_specjalisci[6]);
+            zapisz_raport(RAPORT_3, semid, 
+                    "Kardiolog:\t%d\nNeurolog:\t%d\nLaryngolog:\t%d\nChirurg:\t%d\nOkulista:\t%d\nPediatra:\t%d\n\n\n",
+                stan->dostepni_specjalisci[1],
+                stan->dostepni_specjalisci[2],
+                stan->dostepni_specjalisci[3],
+                stan->dostepni_specjalisci[4],
+                stan->dostepni_specjalisci[5],
+                stan->dostepni_specjalisci[6]);
             semop(semid, &unlock, 1);
-
             zapisz_raport(RAPORT_1, semid, "\n[SIGNAL 2 %s] wracam na SOR\n\n", jaki_lekarz);
             zapisz_raport(KONSOLA, semid, "[SIGNAL 2 %s] wracam na SOR\n", jaki_lekarz);
-
+            
             wezwanie_na_oddzial = 0;
         }
 
-        /* Odbieranie pacjenta z kolejki */
-        ssize_t ret = msgrcv(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), -3, 0);
-        if (ret == -1) {
-            if (errno == EINTR) {
-                if (ewakuacja_trwa) break;
+        // Użyj IPC_NOWAIT żeby móc sprawdzać koniec_pracy
+        if(msgrcv(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), -3, IPC_NOWAIT) == -1)
+        {
+            if (errno == ENOMSG) {
+                usleep(100000);
                 continue;
             }
+            if (errno == EINTR) continue;
             perror("blad msgrcv");
-            break;
+            break;            
         }
 
-        if (ewakuacja_trwa) break;
-
         int r = rand() % 1000;
+
         int skierowanie = 0;
         if (r < 850) skierowanie = 1;
         else if (r < 995) skierowanie = 2;
         else skierowanie = 3;
 
-        zapisz_raport(KONSOLA, semid, "[%s] %s Pacjent %d %s\n",
+        zapisz_raport(KONSOLA, semid, "[%s] %s Pacjent %d %s\n", 
             jaki_lekarz, dialog[typ_lekarza], pacjent.pacjent_pid, int_2_skierowanie(skierowanie));
 
         pacjent.skierowanie = skierowanie;
         pacjent.mtype = pacjent.pacjent_pid;
 
-        for (;;) {
-    if (msgsnd(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), IPC_NOWAIT) == 0)
-        break;
-
-    if (errno == EINTR) {
-        if (ewakuacja_trwa) goto koniec_spec;
-        continue;
+        if (msgsnd(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
+        {
+            if (errno != EINTR)
+                perror("specjalista - blad msgsnd");
+        }
     }
-    if (errno == EAGAIN) { usleep(1000); continue; }
-    perror("specjalista - blad msgsnd (reply)");
-    break;
+    
+    shmdt(stan);
 }
 
-    }
-
-koniec_spec:
-    zapisz_raport(KONSOLA, semid, "[%s] sygnal ewakuacja - koncze prace\n", jaki_lekarz);
-    if (stan != (void*)-1) shmdt(stan);
-}
-
-int main(int argc, char *argv[])
+int main(int argc, char*argv[])
 {
-    /* KRYTYCZNE: Ignorujemy SIGINT */
-    signal(SIGINT, SIG_IGN);
-
+    // Obsługa sygnałów
     struct sigaction sa;
     sa.sa_handler = handle_sig;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIG_LEKARZ_ODDZIAL, &sa, NULL);
-    sigaction(SIG_EWAKUACJA, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+    
+    // Ignoruj SIGINT - lekarze nie reagują bezpośrednio na Ctrl+C
+    signal(SIGINT, SIG_IGN);
+    
+    // SIGTSTP (Ctrl+Z) i SIGCONT - domyślne zachowanie
+    signal(SIGTSTP, SIG_DFL);
+    signal(SIGCONT, SIG_DFL);
 
-    if (argc < 2) {
-        fprintf(stderr, "zle uzyles programu.\n");
+    if (argc < 2)
+    {
+        fprintf(stderr, "zle uzyles programu. ");
         exit(1);
     }
 
     typ_lekarza = atoi(argv[1]);
 
     int msgid_poz = msgget(ftok(FILE_KEY, ID_KOLEJKA_POZ), 0);
-    semid = semget(ftok(FILE_KEY, ID_SEM_SET), 0, 0);
+    semid = semget(ftok(FILE_KEY, ID_SEM_SET), 0, 0); 
     shmid = shmget(ftok(FILE_KEY, ID_SHM_MEM), 0, 0);
 
-    srand(time(NULL) ^ getpid());
-
     int msgid_spec[10];
-    for (int i = 1; i <= 6; i++) {
+    for(int i = 1; i <= 6; i++)
+    {
         int symbol = int_2_msgid(i);
         msgid_spec[i] = msgget(ftok(FILE_KEY, symbol), 0);
-        if (msgid_spec[i] == -1) {
+        if (msgid_spec[i] == -1)
+        {
             perror("blad msgget");
             exit(1);
         }
     }
 
-    if (typ_lekarza == 0) {
+    srand(time(NULL) ^ getpid());
+
+    if (typ_lekarza == 0)
+    {
         praca_poz(msgid_poz);
-    } else {
+    }
+    else
+    {
         praca_specjalista(typ_lekarza, msgid_spec[typ_lekarza]);
     }
 
+    zapisz_raport(KONSOLA, semid, "[%s] Koncze prace.\n", int_to_lekarz(typ_lekarza));
     return 0;
 }
