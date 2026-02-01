@@ -18,9 +18,11 @@
 #include <sys/wait.h>
 
 #define FILE_KEY "."
+
+// ID Kolejek
 #define ID_KOLEJKA_REJESTRACJA 'R'
 #define ID_KOLEJKA_POZ 'P'
-#define ID_KOLEJKA_STATYSTYKI 'T'  // NOWA kolejka pacjent->main
+#define ID_KOLEJKA_STATYSTYKI 'T'
 
 #define ID_KOL_KARDIOLOG 'K'
 #define ID_KOL_NEUROLOG 'N'
@@ -28,14 +30,15 @@
 #define ID_KOL_CHIRURG 'C'
 #define ID_KOL_OKULISTA 'O'
 #define ID_KOL_PEDIATRA 'D'
+// ===================================================
 
 #define ID_SHM_MEM 'S'
 #define ID_SEM_SET 'M'
 #define ID_SEM_LIMITS 'X'
 
-#define PACJENCI_NA_DOBE 10000
-#define MAX_PACJENTOW 1000
-#define MAX_PROCESOW 1000
+#define PACJENCI_NA_DOBE 5000
+#define MAX_PACJENTOW 100
+#define MAX_PROCESOW 120
 #define INT_LIMIT_KOLEJEK 500
 
 #define RAPORT_1 "raport1.txt"
@@ -43,7 +46,6 @@
 #define RAPORT_3 "raport3.txt"
 #define KONSOLA NULL
 
-// Semafory - uproszczone (bez SEM_BRAMKA_2)
 #define SEM_DOSTEP_PAMIEC 0
 #define SEM_MIEJSCA_SOR 1
 #define SEM_ZAPIS_PLIK 2   
@@ -61,41 +63,32 @@
 #define LICZBA_SLIMITS     8
 
 #define LEK_POZ 0
-#define LEK_KARDIOLOG 1
-#define LEK_NEUROLOG 2
-#define LEK_LARYNGOLOG 3
-#define LEK_CHIRURG 4
-#define LEK_OKULISTA 5
 #define LEK_PEDIATRA 6
-
 #define CZERWONY 1
 #define ZOLTY 2
 #define ZIELONY 3
 
-// Sygnały
 #define SIG_EWAKUACJA SIGINT
 #define SIG_LEKARZ_ODDZIAL SIGUSR2
-
 #define TYP_VIP 1
 #define TYP_ZWYKLY 2
 
-// Stany pacjenta dla ewakuacji
 #define STAN_PRZED_SOR 0
 #define STAN_W_POCZEKALNI 1
-#define STAN_U_LEKARZA 2
-#define STAN_WYCHODZI 3
+#define STAN_WYCHODZI 2
 
-// Struktura StanSOR - do synchronizacji i statystyk
-typedef struct {
+typedef struct 
+{
     int symulacja_trwa;
     int dostepni_specjalisci[7];
-    int dlugosc_kolejki_rejestracji;  // do dynamicznego otwierania okienka 2
-    int czy_okienko_2_otwarte;        // flaga dla wątku bramki
-    int stan_przed_sor;               // liczba pacjentów czekających przed SOR
-    int stan_poczekalnia;             // liczba pacjentów w poczekalni
+    int dlugosc_kolejki_rejestracji;
+    int czy_okienko_2_otwarte;
+    
+    // Pola do ewakuacji
+    int ewakuowani_z_poczekalni;
+    int ewakuowani_sprzed_sor;
 } StanSOR;
 
-// Struktura do komunikacji pacjent<->lekarz
 typedef struct {
     long mtype;       
     pid_t pacjent_pid; 
@@ -106,17 +99,16 @@ typedef struct {
     int skierowanie;   
 } KomunikatPacjenta;
 
-// NOWA struktura - statystyki wysyłane przez pacjenta do main
 typedef struct {
-    long mtype;        // zawsze 1
+    long mtype;
     int czy_vip;
-    int kolor;         // CZERWONY/ZOLTY/ZIELONY lub 0 jeśli zdrowy
-    int typ_lekarza;   // 0 = odesłany z POZ, 1-6 = specjalista
-    int skierowanie;   // 1=dom, 2=oddział, 3=inna placówka
+    int kolor;
+    int typ_lekarza;
+    int skierowanie;
 } StatystykaPacjenta;
 
-// Lokalna struktura statystyk w main (nie pamięć dzielona)
-typedef struct {
+typedef struct 
+{
     int obs_pacjenci;
     int ile_vip;
     int obs_spec[7];
@@ -133,24 +125,17 @@ union semun {
 
 static inline void zapisz_raport(const char* filename, int semid, const char* format, ...) {
     va_list args;
-
     if (filename == KONSOLA) {
         struct sembuf lock = {SEM_ZAPIS_PLIK, -1, SEM_UNDO};
         struct sembuf unlock = {SEM_ZAPIS_PLIK, 1, SEM_UNDO};
-
-        while (semop(semid, &lock, 1) == -1) {
-            if (errno != EINTR) return;
-        }
-
+        while (semop(semid, &lock, 1) == -1) { if (errno != EINTR) return; }
+        
         va_start(args, format);
         vprintf(format, args); 
         va_end(args);
-        
         fflush(stdout); 
 
-        while (semop(semid, &unlock, 1) == -1) {
-            if (errno != EINTR) break;
-        }
+        while (semop(semid, &unlock, 1) == -1) { if (errno != EINTR) break; }
     }
     else {
         FILE *f = fopen(filename, "a");
@@ -163,10 +148,13 @@ static inline void zapisz_raport(const char* filename, int semid, const char* fo
     }
 }
 
-static inline void podsumowanie(StatystykiLokalne *stat, int ewak_z_poczekalni, int ewak_sprzed_sor)
+static inline void podsumowanie(StatystykiLokalne *stat, StanSOR *stan)
 {
     double p = (double)stat->obs_pacjenci; 
     if (p == 0) p = 1.0; 
+    
+    int ewak_z_poczekalni = stan->ewakuowani_z_poczekalni;
+    int ewak_sprzed_sor = stan->ewakuowani_sprzed_sor;
 
     printf("\n==============================================\n");
     printf("         RAPORT KONCOWY (PODSUMOWANIE)        \n");
@@ -205,11 +193,10 @@ static inline void podsumowanie(StatystykiLokalne *stat, int ewak_z_poczekalni, 
     printf("Do innej placowki:     %d (oczekiwano ok.: %d)\n", 
            stat->decyzja[3], (int)(0.005 * p + 0.5));
 
-    printf("\n--- RAPORT EWAKUACJI ---\n");
-    printf("Ewakuowani z poczekalni:   %d\n", ewak_z_poczekalni);
-    printf("Ewakuowani sprzed SOR:     %d\n", ewak_sprzed_sor);
-    printf("Razem ewakuowani:          %d\n", ewak_z_poczekalni + ewak_sprzed_sor);
-
+    printf("\n--- RAPORT EWAKUACJI (TEST SYNCHRONIZACJI) ---\n");
+    printf("Ewakuowani z poczekalni (W_SRODKU): %d\n", ewak_z_poczekalni);
+    printf("Ewakuowani sprzed SOR (W_KOLEJCE):  %d\n", ewak_sprzed_sor);
+    printf("RAZEM (wg StanSOR):                 %d\n", ewak_z_poczekalni + ewak_sprzed_sor);
     printf("==============================================\n");
 }
 
