@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "wspolne.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -13,7 +14,6 @@ void handle_sig(int sig)
 {
     if (sig == SIGTERM)
     {
-        // SIGTERM = koniec pracy
         zapisz_raport(KONSOLA, semid, "[rejestracja %d] Otrzymano sygnal zakonczenia. Zamykam okienko.\n", nr_okienka);
         koniec_pracy = 1;
     }
@@ -28,10 +28,8 @@ int main(int argc, char*argv[])
     sa.sa_flags = 0;
     sigaction(SIGTERM, &sa, NULL);
     
-    // Ignoruj SIGINT - rejestracja nie reaguje bezpośrednio na Ctrl+C
     signal(SIGINT, SIG_IGN);
     
-    // SIGTSTP (Ctrl+Z) i SIGCONT - domyślne zachowanie
     signal(SIGTSTP, SIG_DFL);
     signal(SIGCONT, SIG_DFL);
 
@@ -66,7 +64,7 @@ int main(int argc, char*argv[])
 
     while(!koniec_pracy)
     {
-        usleep(500000); // 0.5s zamiast 2s
+        
         
         if (nr_okienka == 1)
         {
@@ -98,7 +96,6 @@ int main(int argc, char*argv[])
 
         if (nr_okienka == 2)
         {
-            // Użyj IPC_NOWAIT żeby móc sprawdzać koniec_pracy
             struct sembuf czekaj_nowait = {SEM_BRAMKA_2, -1, IPC_NOWAIT};
             if (semop(semid, &czekaj_nowait, 1) == -1) {
                 if (errno == EAGAIN) {
@@ -111,7 +108,7 @@ int main(int argc, char*argv[])
             }
         }
 
-        int flaga = IPC_NOWAIT; // Zawsze non-blocking żeby móc sprawdzać koniec_pracy
+        int flaga = IPC_NOWAIT; 
         
         ssize_t status = msgrcv(msgid_we, &pacjent, sizeof(KomunikatPacjenta) - sizeof(long), -2, flaga);
 

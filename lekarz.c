@@ -94,7 +94,7 @@ void praca_poz(int msgid_poz)
             continue;
         } 
 
-        zapisz_raport(KONSOLA, semid,"[POZ] wykonuje podstawowe badania na pacjencie %d, nadaje priorytet\n", pacjent.pacjent_pid);
+        
 
         int chory = 1;
         int r = rand() % 100;

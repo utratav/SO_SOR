@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include "wspolne.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -18,7 +20,7 @@ StanSOR *stan_ptr = NULL;
 volatile sig_atomic_t stan_pacjenta = STAN_PRZED_SOR;
 volatile sig_atomic_t ewakuacja_flaga = 0;
 
-int sem_op_miejsca = 1;        // Ile miejsc zajmuje (1 lub 2 z opiekunem)
+int sem_op_miejsca = 1;       
 int potrzebny_rodzic = 0;
 pthread_t rodzic_thread;
 unsigned long id_opiekuna = 0;
@@ -26,16 +28,13 @@ volatile sig_atomic_t rodzic_utworzony = 0;
 
 void handle_ewakuacja(int sig)
 {
-    // Tylko ustawiamy flagę - reszta w main lub przy wyjściu
     ewakuacja_flaga = 1;
 }
 
 void wykonaj_ewakuacje()
 {
-    // Ta funkcja jest wywoływana z normalnego kontekstu, nie z handlera
     if (stan_pacjenta == STAN_PRZED_SOR)
     {
-        // Pacjent czeka przed SOR (na semafor)
         if (stan_ptr != NULL && semid != -1)
         {
             struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, 0};
@@ -49,11 +48,9 @@ void wykonaj_ewakuacje()
             }
         }
         
-        // Nie trzeba oddawać semafora SOR - jeszcze go nie mamy
     }
     else if (stan_pacjenta == STAN_W_POCZEKALNI || stan_pacjenta == STAN_U_LEKARZA)
     {
-        // Pacjent jest w środku SOR
         if (stan_ptr != NULL && semid != -1)
         {
             struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, 0};
@@ -74,14 +71,12 @@ void wykonaj_ewakuacje()
             }
         }
         
-        // Oddaj miejsca w SOR
         if (semid != -1) {
             struct sembuf wyjscie = {SEM_MIEJSCA_SOR, sem_op_miejsca, 0};
             semop(semid, &wyjscie, 1);
         }
     }
     
-    // Zakończ wątek opiekuna jeśli istnieje
     if (potrzebny_rodzic && rodzic_utworzony) {
         pthread_cancel(rodzic_thread);
         pthread_join(rodzic_thread, NULL);
@@ -94,7 +89,6 @@ void wykonaj_ewakuacje()
 
 void* watek_rodzic(void* arg)
 {
-    // Opiekun - może być anulowany
     while(1) {
         sleep(1);
         pthread_testcancel();
@@ -120,7 +114,6 @@ void unlock_limit(int sem_indeks)
     semop(semid_limits, &operacja, 1);
 }
 
-// Makro do sprawdzania ewakuacji
 #define CHECK_EWAKUACJA() do { \
     if (ewakuacja_flaga) { \
         wykonaj_ewakuacje(); \
@@ -130,15 +123,13 @@ void unlock_limit(int sem_indeks)
 
 int main(int argc, char *argv[])
 {
-    // Ustaw obsługę SIGINT jako ewakuacji
     struct sigaction sa;
     sa.sa_handler = handle_ewakuacja;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0; // Bez SA_RESTART - chcemy przerwać semop/msgrcv
+    sa.sa_flags = 0; 
     sigaction(SIGINT, &sa, NULL);
     
-    // SIGTSTP (Ctrl+Z) i SIGCONT - domyślne zachowanie
-    // Pozwalamy systemowi zatrzymać/wznowić proces
+  
     signal(SIGTSTP, SIG_DFL);
     signal(SIGCONT, SIG_DFL);
     
@@ -169,7 +160,7 @@ int main(int argc, char *argv[])
     {
         perror("blad przy podlaczaniu do ipc");
         exit(EXIT_FAILURE);
-    }
+    } 
 
     int err = 0;
     for (int i = 1; i <= 6; i++)
@@ -225,7 +216,6 @@ int main(int argc, char *argv[])
 
     CHECK_EWAKUACJA();
 
-    // ========== FAZA 1: Czekanie przed SOR ==========
     stan_pacjenta = STAN_PRZED_SOR;
     
     struct sembuf mutex_lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
@@ -253,7 +243,6 @@ int main(int argc, char *argv[])
 
     CHECK_EWAKUACJA();
 
-    // ========== FAZA 2: W poczekalni ==========
     stan_pacjenta = STAN_W_POCZEKALNI;
 
     semop(semid, &mutex_lock, 1);
@@ -273,7 +262,6 @@ int main(int argc, char *argv[])
 
     CHECK_EWAKUACJA();
     
-    // ========== Rejestracja ==========
     KomunikatPacjenta msg;
     memset(&msg, 0, sizeof(msg));
     msg.mtype = vip ? TYP_VIP : TYP_ZWYKLY;
@@ -316,10 +304,8 @@ int main(int argc, char *argv[])
     stan->dlugosc_kolejki_rejestracji--;      
     semop(semid, &mutex_unlock, 1);
 
-    // ========== FAZA 3: U lekarza ==========
     stan_pacjenta = STAN_U_LEKARZA;
 
-    // ========== POZ ==========
     msg.mtype = 1; 
     lock_limit(SLIMIT_POZ);
     CHECK_EWAKUACJA();

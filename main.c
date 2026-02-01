@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include "wspolne.h"
 #include <sys/wait.h>
 #include <pthread.h>
@@ -12,7 +14,7 @@ pid_t pid_poz = -1;
 pid_t pid_gen = -1;
 
 volatile int monitor_running = 1;
-pthread_t monitor_tid;
+//pthread_t monitor_tid;
 pthread_t monitor2_tid;
 
 pid_t pid_dyrektor = -1;
@@ -32,11 +34,6 @@ void przeprowadz_ewakuacje()
     printf("\n=== ROZPOCZYNAM EWAKUACJE SOR ===\n");
     printf("================================\n");
 
-    // SIGINT został już wysłany przez Ctrl+C, ale wyślij go ponownie do grupy
-    // żeby upewnić się że wszyscy go dostali
-    // Uwaga: main ignoruje SIGINT w tym momencie
-    
-    // Czekaj na zakończenie generatora (który ubija dzieci i zbiera zombie)
     if (pid_gen > 0) {
         printf("[MAIN] Czekam na generator (PID %d)...\n", pid_gen);
         int status;
@@ -44,7 +41,6 @@ void przeprowadz_ewakuacje()
         printf("[MAIN] Generator zakonczyl prace.\n");
     }
     
-    // Teraz ubij pozostałe procesy (lekarze, rejestracja)
     printf("[MAIN] Zamykam procesy lekarzy i rejestracji...\n");
     
     for (int i = 1; i <= 6; i++) {
@@ -67,7 +63,6 @@ void przeprowadz_ewakuacje()
         kill(pid_dyrektor, SIGKILL);
     }
     
-    // Zbierz wszystkie procesy
     while(wait(NULL) > 0);
 
     if (stan != (void*)-1 && stan) 
@@ -85,7 +80,7 @@ void przeprowadz_ewakuacje()
     }
 }
 
-void* watek_monitor_kolejki(void* arg) 
+/*void* watek_monitor_kolejki(void* arg) 
 {
     FILE *f = fopen(RAPORT_1, "w");
     if(f) { 
@@ -142,7 +137,7 @@ void* watek_monitor_kolejki(void* arg)
         }
     }
     return NULL;
-}
+} */
 
 void* watek_monitor_bramki(void* arg)
 {
@@ -371,10 +366,10 @@ int main(int argc, char *argv[])
         exit(0);
     }
 
-    if (pthread_create(&monitor_tid, NULL, watek_monitor_kolejki, NULL) != 0) 
+    /*if (pthread_create(&monitor_tid, NULL, watek_monitor_kolejki, NULL) != 0) 
     {
         perror("Nie udalo sie utworzyc watku monitorujacego");
-    }
+    }*/
 
     if (pthread_create(&monitor2_tid, NULL, watek_monitor_bramki, NULL) != 0) 
     {
@@ -407,7 +402,7 @@ int main(int argc, char *argv[])
 
     // Zatrzymaj monitory
     monitor_running = 0;
-    pthread_join(monitor_tid, NULL);
+    //pthread_join(monitor_tid, NULL);
     pthread_join(monitor2_tid, NULL);
 
     if (ewakuacja_rozpoczeta) {

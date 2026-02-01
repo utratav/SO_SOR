@@ -1,14 +1,14 @@
+#define _GNU_SOURCE
+
 #include "wspolne.h"
 
 int semid = -1;
 int shmid = -1;
 StanSOR *stan = NULL;
 
-// Flaga ewakuacji - ustawiana TYLKO przez SIGINT
 volatile sig_atomic_t ewakuacja = 0;
 
-// Lista PIDów dzieci do zabicia przy ewakuacji
-#define MAX_DZIECI 10000
+#define MAX_DZIECI 30000
 pid_t dzieci[MAX_DZIECI];
 int liczba_dzieci = 0;
 pthread_mutex_t dzieci_mutex = PTHREAD_MUTEX_INITIALIZER;

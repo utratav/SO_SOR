@@ -34,9 +34,9 @@
 #define ID_SEM_SET 'M'
 #define ID_SEM_LIMITS 'X'
 
-#define PACJENCI_NA_DOBE 20000 //max zakres inta
-#define MAX_PACJENTOW 10000//max dla sem 32 768
-#define MAX_PROCESOW 10000  //ogranicza nas sem
+#define PACJENCI_NA_DOBE 200 //max zakres inta
+#define MAX_PACJENTOW 50//max dla sem 32 768
+#define MAX_PROCESOW 50  //ogranicza nas sem
 #define INT_LIMIT_KOLEJEK 500 // 16384 / (sizeof(KomunikatPacjenta) - sizeof(long)) = 628
 
 #define RAPORT_1 "raport1.txt"
@@ -72,23 +72,21 @@
 #define ZOLTY 2
 #define ZIELONY 3
 
-// SIGINT (Ctrl+C) jako sygnał ewakuacji
 #define SIG_EWAKUACJA SIGINT
-// SIGUSR2 - wezwanie lekarza na oddział
 #define SIG_LEKARZ_ODDZIAL SIGUSR2
 
 #define TYP_VIP 1
 #define TYP_ZWYKLY 2
 
-// Stany pacjenta dla ewakuacji
-#define STAN_PRZED_SOR 0      // Czeka na semafor wejściowy
-#define STAN_W_POCZEKALNI 1   // W poczekalni (po wejściu, przed/w rejestracji)
-#define STAN_U_LEKARZA 2      // U lekarza (POZ lub specjalista)
-#define STAN_WYCHODZI 3       // Wychodzi z SOR
+#define STAN_PRZED_SOR 0      
+#define STAN_W_POCZEKALNI 1   
+#define STAN_U_LEKARZA 2      
+#define STAN_WYCHODZI 3      
 
-typedef struct {
-    int liczba_pacjentow_w_srodku;    // Pacjenci w poczekalni
-    int liczba_przed_sor;              // NOWE: Pacjenci czekający na wejście (przed semaforem)
+typedef struct 
+{
+    int liczba_pacjentow_w_srodku;    
+    int liczba_przed_sor;              
     int dlugosc_kolejki_rejestracji;
     int czy_okienko_2_otwarte;
 
@@ -101,13 +99,14 @@ typedef struct {
     int decyzja[4];   
     
     int symulacja_trwa;
-    int ewakuowani_z_poczekalni;    // ZMIANA: rozdzielenie statystyk
-    int ewakuowani_sprzed_sor;      // NOWE: ewakuowani sprzed wejścia
+    int ewakuowani_z_poczekalni;   
+    int ewakuowani_sprzed_sor;      
     int dostepni_specjalisci[7];
     
 } StanSOR;
 
-typedef struct {
+typedef struct 
+{
     long mtype;       
     pid_t pacjent_pid; 
     int typ_lekarza;   
@@ -115,9 +114,11 @@ typedef struct {
     int wiek;
     int kolor;         
     int skierowanie;   
+
 } KomunikatPacjenta;
 
-union semun {
+union semun 
+{
     int val;
     struct semid_ds *buf;
     unsigned short *array;
