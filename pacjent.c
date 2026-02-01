@@ -1,4 +1,3 @@
-
 #define _GNU_SOURCE
 
 #include "wspolne.h"
@@ -10,10 +9,11 @@
 int semid = -1;
 int shmid = -1;
 int semid_limits = -1;
-int msgid_stat = -1;  // kolejka statystyk
+int msgid_stat = -1;
+StanSOR *stan = NULL;
 
 volatile sig_atomic_t stan_pacjenta = STAN_PRZED_SOR;
-volatile sig_atomic_t ewakuacja_flaga = 0;
+volatile sig_atomic_t wyslano_statystyki = 0;  // czy już wysłaliśmy statystyki
 
 int sem_op_miejsca = 1;
 int potrzebny_rodzic = 0;
@@ -21,31 +21,35 @@ pthread_t rodzic_thread;
 unsigned long id_opiekuna = 0;
 volatile sig_atomic_t rodzic_utworzony = 0;
 
-
 void handle_ewakuacja(int sig)
 {
-    if (stan_pacjenta > 0)
+    // Zakończ wątek rodzica
+    if (potrzebny_rodzic && rodzic_utworzony) 
     {
-        struct sembuf ewak;
-        ewak.sem_flg = SEM_UNDO;
-        ewak.sem_num = SEM_MIEJSCA_SOR;
-        ewak.sem_op = sem_op_miejsca;
-
-        semop(semid, &ewak, 1);
-    }
-
-    if (potrzebny_rodzic && rodzic_utworzony) {
         pthread_cancel(rodzic_thread);
-        pthread_join(rodzic_thread, NULL);
     }
 
-    if (stan != NULL && stan != (void*)-1) {
-        shmdt(stan);
+    // Oddaj miejsca w SOR jeśli byliśmy w środku
+    if (stan_pacjenta == STAN_W_POCZEKALNI)
+    {
+        if (semid != -1)
+        {
+            struct sembuf ewak = {SEM_MIEJSCA_SOR, sem_op_miejsca, 0};
+            semop(semid, &ewak, 1);
+        }
     }
 
-    if (stan_pacjenta < 2) _exit(sem_op_miejsca);
+    // Jeśli już wysłaliśmy statystyki - wychodzimy z kodem 0 (nie liczymy podwójnie)
+    // Jeśli nie wysłaliśmy - wychodzimy z kodem sem_op_miejsca (generator zliczy)
+    if (wyslano_statystyki)
+    {
+        _exit(0);
+    }
+    else
+    {
+        _exit(sem_op_miejsca);
+    }
 }
-
 
 void* watek_rodzic(void* arg)
 {
@@ -60,10 +64,7 @@ void lock_limit(int sem_indeks)
 {
     struct sembuf operacja = {sem_indeks, -1, SEM_UNDO};
     while (semop(semid_limits, &operacja, 1) == -1) {
-        if (errno == EINTR) {
-            if (ewakuacja_flaga) return;
-            continue;
-        }
+        if (errno == EINTR) continue;
         break;
     }
 }
@@ -73,20 +74,6 @@ void unlock_limit(int sem_indeks)
     struct sembuf operacja = {sem_indeks, 1, SEM_UNDO};
     semop(semid_limits, &operacja, 1);
 }
-
-int int_2_msgid(int typ) {
-    switch(typ) {
-        case LEK_POZ:        return ID_KOLEJKA_POZ;
-        case LEK_KARDIOLOG:  return ID_KOL_KARDIOLOG;
-        case LEK_NEUROLOG:   return ID_KOL_NEUROLOG;
-        case LEK_LARYNGOLOG: return ID_KOL_LARYNGOLOG;
-        case LEK_CHIRURG:    return ID_KOL_CHIRURG;
-        case LEK_OKULISTA:   return ID_KOL_OKULISTA;
-        case LEK_PEDIATRA:   return ID_KOL_PEDIATRA;
-        default: return -1;
-    }
-}
-
 
 int main(int argc, char *argv[])
 {
@@ -103,10 +90,40 @@ int main(int argc, char *argv[])
 
     stan_pacjenta = STAN_PRZED_SOR;
 
-    shmid = shmget(ftok(FILE_KEY, ID_SHM_MEM), 0, 0);
-    StanSOR *stan = NULL;
+    // Połącz z IPC
+    key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
+    key_t key_shm = ftok(FILE_KEY, ID_SHM_MEM);
+    key_t key_limits = ftok(FILE_KEY, ID_SEM_LIMITS);
+    key_t key_msg_rej = ftok(FILE_KEY, ID_KOLEJKA_REJESTRACJA);
+    key_t key_msg_poz = ftok(FILE_KEY, ID_KOLEJKA_POZ);
+    key_t key_msg_stat = ftok(FILE_KEY, ID_KOLEJKA_STATYSTYKI);
+
+    semid = semget(key_sem, 0, 0);
+    shmid = shmget(key_shm, 0, 0);
+    semid_limits = semget(key_limits, 0, 0);
+    int rej_msgid = msgget(key_msg_rej, 0);
+    int poz_id = msgget(key_msg_poz, 0);
+    msgid_stat = msgget(key_msg_stat, 0);
+
     if (shmid != -1) {
         stan = (StanSOR*)shmat(shmid, NULL, 0);
+        if (stan == (void*)-1) stan = NULL;
+    }
+
+    int spec_msgids[10];
+    for (int i = 0; i < 10; i++) spec_msgids[i] = -1;
+    spec_msgids[1] = msgget(ftok(FILE_KEY, ID_KOL_KARDIOLOG), 0);
+    spec_msgids[2] = msgget(ftok(FILE_KEY, ID_KOL_NEUROLOG), 0);
+    spec_msgids[3] = msgget(ftok(FILE_KEY, ID_KOL_LARYNGOLOG), 0);
+    spec_msgids[4] = msgget(ftok(FILE_KEY, ID_KOL_CHIRURG), 0);
+    spec_msgids[5] = msgget(ftok(FILE_KEY, ID_KOL_OKULISTA), 0);
+    spec_msgids[6] = msgget(ftok(FILE_KEY, ID_KOL_PEDIATRA), 0);
+
+    if (semid == -1 || rej_msgid == -1 || poz_id == -1 || semid_limits == -1 || msgid_stat == -1)
+    {
+        perror("blad przy podlaczaniu do ipc");
+        _exit(1);
+    }
 
     pid_t mpid = getpid();
     int wiek = rand() % 100;
@@ -129,10 +146,6 @@ int main(int argc, char *argv[])
         }
     }
 
-
-    key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
-    semid = semget(key_sem, 0, 0);
-
     char buf[150]; 
     if (potrzebny_rodzic)
         sprintf(buf, "[pacjent] id: %d --- wiek: %d --- vip: %s\t [rodzic] tid: %lu\n", 
@@ -143,63 +156,45 @@ int main(int argc, char *argv[])
     
     zapisz_raport(KONSOLA, semid, "%s", buf);
 
-    
-    key_t key_limits = ftok(FILE_KEY, ID_SEM_LIMITS);
-    key_t key_msg_rej = ftok(FILE_KEY, ID_KOLEJKA_REJESTRACJA);
-    key_t key_msg_poz = ftok(FILE_KEY, ID_KOLEJKA_POZ);
-    key_t key_msg_stat = ftok(FILE_KEY, ID_KOLEJKA_STATYSTYKI);
-
-    
-    semid_limits = semget(key_limits, 0, 0);
-    int rej_msgid = msgget(key_msg_rej, 0);
-    int poz_id = msgget(key_msg_poz, 0);
-    msgid_stat = msgget(key_msg_stat, 0);
-
-    int spec_msgids[10];
-    for (int i = 0; i < 10; i++) spec_msgids[i] = -1;
-    spec_msgids[1] = msgget(ftok(FILE_KEY, ID_KOL_KARDIOLOG), 0);
-    spec_msgids[2] = msgget(ftok(FILE_KEY, ID_KOL_NEUROLOG), 0);
-    spec_msgids[3] = msgget(ftok(FILE_KEY, ID_KOL_LARYNGOLOG), 0);
-    spec_msgids[4] = msgget(ftok(FILE_KEY, ID_KOL_CHIRURG), 0);
-    spec_msgids[5] = msgget(ftok(FILE_KEY, ID_KOL_OKULISTA), 0);
-    spec_msgids[6] = msgget(ftok(FILE_KEY, ID_KOL_PEDIATRA), 0);
-
-    if (semid == -1 || rej_msgid == -1 || poz_id == -1 || semid_limits == -1 || msgid_stat == -1)
+    // Inkrementuj licznik czekających przed SOR
+    if (stan != NULL)
     {
-        perror("blad przy podlaczaniu do ipc");
-        exit(EXIT_FAILURE);
+        struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
+        struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
+        semop(semid, &lock, 1);
+        stan->stan_przed_sor++;
+        semop(semid, &unlock, 1);
     }
 
-
+    // ========== CZEKANIE NA WEJŚCIE DO SOR ==========
     struct sembuf wejscie_do_poczekalni = {SEM_MIEJSCA_SOR, -sem_op_miejsca, SEM_UNDO};
 
     while (semop(semid, &wejscie_do_poczekalni, 1) == -1)
     {
         if (errno == EINTR) {
-            usleep(10000);
-            continue;
+            continue; // Handler wykona _exit jeśli ewakuacja
         }
         perror("blad semop wejscie do poczekalni");
-        wykonaj_ewakuacje();
+        _exit(1);
     }
 
+    // ========== WESZLIŚMY DO POCZEKALNI ==========
     stan_pacjenta = STAN_W_POCZEKALNI;
     
-    
-    StanSOR *stan = NULL;
-    if (shmid != -1) {
-        stan = (StanSOR*)shmat(shmid, NULL, 0);
-        if (stan != (void*)-1) 
-        {
-            struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
-            struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
-
-            semop(semid, &lock, 1);
-            stan->dlugosc_kolejki_rejestracji++;
-            semop(semid, &unlock, 1);
-        }
+    if (stan != NULL)
+    {
+        struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
+        struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
+        semop(semid, &lock, 1);
+        stan->stan_przed_sor--;
+        stan->stan_poczekalnia++;
+        stan->dlugosc_kolejki_rejestracji++;
+        if (!stan->czy_okienko_2_otwarte && stan->dlugosc_kolejki_rejestracji > MAX_PACJENTOW / 2)
+            stan->czy_okienko_2_otwarte = 1;
+        semop(semid, &unlock, 1);
     }
     
+    // ========== REJESTRACJA ==========
     KomunikatPacjenta msg;
     memset(&msg, 0, sizeof(msg));
     msg.mtype = vip ? TYP_VIP : TYP_ZWYKLY;
@@ -209,66 +204,60 @@ int main(int argc, char *argv[])
 
     lock_limit(SLIMIT_REJESTRACJA);
     
-    
     while (msgsnd(rej_msgid, &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
     {
-        if (errno == EINTR) { usleep(10000); continue; }
-        if (errno == EAGAIN) { usleep(10000); continue; }
+        if (errno == EINTR || errno == EAGAIN) continue;
         perror("blad wysylania do rejestracji");
         unlock_limit(SLIMIT_REJESTRACJA);
-        
+        _exit(1);
     }    
  
     while (msgrcv(rej_msgid, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
     {
-        if (errno == EINTR) { usleep(10000); continue; }
+        if (errno == EINTR) continue;
         perror("blad msgrcv od rejestracji");
         unlock_limit(SLIMIT_REJESTRACJA);
-        
+        _exit(1);
     }
     unlock_limit(SLIMIT_REJESTRACJA);
 
-    if (stan != NULL && stan != (void*)-1) {
+    if (stan != NULL)
+    {
         struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
         struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
         semop(semid, &lock, 1);
         if (stan->dlugosc_kolejki_rejestracji > 0)
             stan->dlugosc_kolejki_rejestracji--;
+        if (stan->czy_okienko_2_otwarte && stan->dlugosc_kolejki_rejestracji < MAX_PACJENTOW / 3)
+            stan->czy_okienko_2_otwarte = 0;
         semop(semid, &unlock, 1);
     }
 
-
-   
-
+    // ========== POZ ==========
     msg.mtype = 1; 
     lock_limit(SLIMIT_POZ);
     
     while (msgsnd(poz_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
     {
-        if (errno == EINTR) { usleep(10000); continue; }
-        if (errno == EAGAIN) { usleep(10000); continue; }
+        if (errno == EINTR || errno == EAGAIN) continue;
         perror("blad msgsnd wysylania do poz");
         unlock_limit(SLIMIT_POZ);
-        
+        _exit(1);
     }
 
     while (msgrcv(poz_id, &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
     {
-        if (errno == EINTR) { usleep(10000); continue; }
+        if (errno == EINTR) continue;
         perror("blad msgrcv od poz");
         unlock_limit(SLIMIT_POZ);
-        
+        _exit(1);
     }
     unlock_limit(SLIMIT_POZ);
 
-    
-
+    // ========== SPECJALISTA (jeśli potrzebny) ==========
     if (msg.typ_lekarza > 0)
     {
         int id_spec = msg.typ_lekarza;
-        int spec_msgid = msgget(ftok(FILE_KEY, int_2_msgid(id_spec)), 0);
-
-        
         msg.mtype = msg.kolor; 
         int sem_limit_indeks = -1;
 
@@ -286,30 +275,32 @@ int main(int argc, char *argv[])
         if (sem_limit_indeks != -1)
         {
             lock_limit(sem_limit_indeks);
-            
 
             while (msgsnd(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
             {
-                if (errno == EINTR) { usleep(10000); continue; }
-                if (errno == EAGAIN) { usleep(10000); continue; }
+                if (errno == EINTR || errno == EAGAIN) continue;
                 perror("blad wysylania do specjalisty");
                 unlock_limit(sem_limit_indeks);
-                
+                _exit(1);
             }
 
             while (msgrcv(spec_msgids[id_spec], &msg, sizeof(KomunikatPacjenta) - sizeof(long), mpid, 0) == -1)
             {
-                if (errno == EINTR) { usleep(10000); continue; }
+                if (errno == EINTR) continue;
                 perror("blad msgrcv od specjalisty");
                 unlock_limit(sem_limit_indeks);
-                
+                _exit(1);
             }
 
             unlock_limit(sem_limit_indeks);
         }
     }
 
-
+    // ========== WYCHODZENIE ==========
+    // NAJPIERW ignoruj SIGINT - nie chcemy być przerwani podczas wysyłania statystyk
+    signal(SIGINT, SIG_IGN);
+    
+    // Wyślij statystyki
     StatystykaPacjenta stat_msg;
     stat_msg.mtype = 1;
     stat_msg.czy_vip = msg.czy_vip;
@@ -317,10 +308,9 @@ int main(int argc, char *argv[])
     stat_msg.typ_lekarza = msg.typ_lekarza;
     stat_msg.skierowanie = msg.skierowanie;
     
-    
     msgsnd(msgid_stat, &stat_msg, sizeof(StatystykaPacjenta) - sizeof(long), 0);
-
-    signal(SIGINT, SIG_IGN);
+    wyslano_statystyki = 1;  // Oznacz że wysłaliśmy
+    
     stan_pacjenta = STAN_WYCHODZI;
     
     if (potrzebny_rodzic && rodzic_utworzony) {
@@ -328,12 +318,22 @@ int main(int argc, char *argv[])
         pthread_join(rodzic_thread, NULL);
     }
 
-    struct sembuf wyjscie_z_poczekalni = {SEM_MIEJSCA_SOR, sem_op_miejsca, SEM_UNDO};
+    // Dekrementuj poczekalnię
+    if (stan != NULL)
+    {
+        struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
+        struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
+        semop(semid, &lock, 1);
+        if (stan->stan_poczekalnia > 0)
+            stan->stan_poczekalnia--;
+        semop(semid, &unlock, 1);
+    }
+
+    // Zwolnij miejsce w SOR
+    struct sembuf wyjscie_z_poczekalni = {SEM_MIEJSCA_SOR, sem_op_miejsca, 0};
     semop(semid, &wyjscie_z_poczekalni, 1);
 
-    if (stan != NULL && stan != (void*)-1) {
-        shmdt(stan);
-    }
+    if (stan != NULL) shmdt(stan);
 
     _exit(0);
 }

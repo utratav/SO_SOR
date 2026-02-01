@@ -33,8 +33,8 @@
 #define ID_SEM_SET 'M'
 #define ID_SEM_LIMITS 'X'
 
-#define PACJENCI_NA_DOBE 5000
-#define MAX_PACJENTOW 800
+#define PACJENCI_NA_DOBE 10000
+#define MAX_PACJENTOW 1000
 #define MAX_PROCESOW 1000
 #define INT_LIMIT_KOLEJEK 500
 
@@ -82,18 +82,17 @@
 // Stany pacjenta dla ewakuacji
 #define STAN_PRZED_SOR 0
 #define STAN_W_POCZEKALNI 1
-#define STAN_WYCHODZI 2
+#define STAN_U_LEKARZA 2
+#define STAN_WYCHODZI 3
 
-// Struktura StanSOR - do synchronizacji i licznika kolejki rejestracji
-typedef struct 
-{
+// Struktura StanSOR - do synchronizacji i statystyk
+typedef struct {
     int symulacja_trwa;
     int dostepni_specjalisci[7];
     int dlugosc_kolejki_rejestracji;  // do dynamicznego otwierania okienka 2
-    int czy_okienko_2_otwarte;
-    int stan_przed_sor;
-    int stan_poczekalnia;
-    
+    int czy_okienko_2_otwarte;        // flaga dla wątku bramki
+    int stan_przed_sor;               // liczba pacjentów czekających przed SOR
+    int stan_poczekalnia;             // liczba pacjentów w poczekalni
 } StanSOR;
 
 // Struktura do komunikacji pacjent<->lekarz
@@ -114,19 +113,16 @@ typedef struct {
     int kolor;         // CZERWONY/ZOLTY/ZIELONY lub 0 jeśli zdrowy
     int typ_lekarza;   // 0 = odesłany z POZ, 1-6 = specjalista
     int skierowanie;   // 1=dom, 2=oddział, 3=inna placówka
-
 } StatystykaPacjenta;
 
 // Lokalna struktura statystyk w main (nie pamięć dzielona)
-typedef struct 
-{
+typedef struct {
     int obs_pacjenci;
     int ile_vip;
     int obs_spec[7];
     int obs_kolory[4];
     int obs_dom_poz;
     int decyzja[4];
-
 } StatystykiLokalne;
 
 union semun {

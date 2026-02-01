@@ -1,6 +1,5 @@
 #define _GNU_SOURCE
 
-
 #include "wspolne.h"
 #include <sys/wait.h>
 #include <pthread.h>
@@ -25,19 +24,11 @@ pthread_t bramka_tid;
 volatile sig_atomic_t sprzatanie_trwa = 0;
 volatile sig_atomic_t ewakuacja_rozpoczeta = 0;
 
-
 StatystykiLokalne statystyki;
 pthread_mutex_t stat_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-
 int ewak_z_poczekalni = 0;
 int ewak_sprzed_sor = 0;
-
-const char* nazwy_kolejek[LICZBA_SLIMITS] = {
-    "Rejestracja", "POZ", "Kardiolog", "Neurolog", 
-    "Laryngolog", "Chirurg", "Okulista", "Pediatra"
-};
-
 
 void* watek_statystyki(void* arg)
 {
@@ -67,6 +58,7 @@ void* watek_statystyki(void* arg)
         pthread_mutex_unlock(&stat_mutex);
     }
     
+    // Opróżnij kolejkę na koniec
     while (msgrcv(msgid_stat, &msg, sizeof(StatystykaPacjenta) - sizeof(long), 0, IPC_NOWAIT) != -1) {
         pthread_mutex_lock(&stat_mutex);
         statystyki.obs_pacjenci++;
@@ -94,52 +86,48 @@ void* watek_bramka(void* arg)
         return NULL;
     }
     
-    int local_okienko_otwarte= 0;
-    int prog_otwarcia = MAX_PACJENTOW / 2;
-    int prog_zamkniecia = MAX_PACJENTOW / 3;
+    int local_okienko_otwarte = 0;
     
-    while (monitor_running) {
-        
-        
-        struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
-        struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
-        
+    while (monitor_running) 
+    {
+        usleep(200000);
         
         int shm_okienko_otwarte = stan->czy_okienko_2_otwarte;
         
-        
-        if (!local_okienko_otwarte && shm_okienko_otwarte) {
+        if (!local_okienko_otwarte && shm_okienko_otwarte) 
+        {
             pid_t pid = fork();
             if (pid == 0) 
             {               
                 execl("./rejestracja", "rejestracja", "2", NULL);
                 perror("execl rejestracja 2");
-                exit(1);
+                _exit(1);
             } 
             else if (pid > 0) 
             {
                 pid_rejestracja_2 = pid;
                 local_okienko_otwarte = 1;
                 zapisz_raport(KONSOLA, semid, "[MAIN] Otwieram okienko 2 (kolejka: %d)\n", stan->dlugosc_kolejki_rejestracji);
-                zapisz_raport(RAPORT_2, semid, "[MAIN] Otwieram okienko 2 | kolejka: %d\n", stan->dlugosc_kolejki_rejestracji);
             }
         }
-        // Sprawdź czy trzeba zamknąć okienko 2
-        else if (local_okienko_otwarte && !shm_okienko_otwarte) {
-            if (pid_rejestracja_2 > 0) {
+        else if (local_okienko_otwarte && !shm_okienko_otwarte) 
+        {
+            if (pid_rejestracja_2 > 0) 
+            {
                 kill(pid_rejestracja_2, SIGTERM);
                 waitpid(pid_rejestracja_2, NULL, 0);
                 pid_rejestracja_2 = -1;
                 local_okienko_otwarte = 0;
                 zapisz_raport(KONSOLA, semid, "[MAIN] Zamykam okienko 2 (kolejka: %d)\n", stan->dlugosc_kolejki_rejestracji);
-                zapisz_raport(RAPORT_2, semid, "[MAIN] Zamykam okienko 2 | kolejka: %d\n", stan->dlugosc_kolejki_rejestracji);
             }
         }
     }
     
-    if (local_okienko_otwarte && pid_rejestracja_2 > 0) {
-        kill(pid_rejestracja_2, SIGTERM);
+    if (local_okienko_otwarte && pid_rejestracja_2 > 0) 
+    {
+        kill(pid_rejestracja_2, SIGINT);
         waitpid(pid_rejestracja_2, NULL, 0);
+        pid_rejestracja_2 = -1;
     }
     
     shmdt(stan);
@@ -162,20 +150,18 @@ void czyszczenie()
 
 void signal_handler(int sig) 
 {
-    if (sig == SIGINT) {
-        printf("\n[MAIN] EWAKUACJA (CTRL+C). Rozpoczynam procedure...\n");
-        
+    if (sig == SIGINT) 
+    {
         if (sprzatanie_trwa) return;
         sprzatanie_trwa = 1;
         ewakuacja_rozpoczeta = 1;
         
+        printf("\n[MAIN] EWAKUACJA (CTRL+C). Rozpoczynam procedure...\n");
+        
         monitor_running = 0;
         
-        if (pid_gen > 0) {
-            kill(pid_gen, SIGINT);
-        }
-
-        while(wait(NULL) > 0);
+        // Wyślij SIGINT do CAŁEJ grupy procesów (wszystkie dzieci, wnuki, itd.)
+        kill(0, SIGINT);
     }
 }
 
@@ -189,37 +175,15 @@ int msg_creat(int index_w_tablicy, int klucz_char) {
 pid_t uruchom_proces(const char* prog, const char* process_name, const char* arg1) {
     pid_t pid = fork();
     if (pid == 0) {
-        
         signal(SIGTERM, SIG_DFL);
         
         if(arg1) execl(prog, process_name, arg1, NULL);
         else execl(prog, process_name, NULL);
         
         perror("blad execl");
-        exit(1);
+        _exit(1);
     }
     return pid;
-}
-
-void przeprowadz_ewakuacje()
-{
-    printf("\n=== ROZPOCZYNAM EWAKUACJE SOR ===\n");
-    printf("================================\n");
-    
-    while(wait(NULL) > 0);
-
-    if (pid_gen > 0) {
-        printf("[MAIN] Czekam na generator (PID %d)...\n", pid_gen);
-        waitpid(pid_gen, NULL, 0);
-        printf("[MAIN] Generator zakonczyl prace.\n");
-    }
-    
-    printf("[MAIN] Zamykam procesy lekarzy i rejestracji...\n");
-    
-    
-    if (pid_dyrektor > 0) kill(pid_dyrektor, SIGKILL);
-    
-    while(wait(NULL) > 0);
 }
 
 int main(int argc, char *argv[])
@@ -252,11 +216,9 @@ int main(int argc, char *argv[])
     msg_creat(6, ID_KOL_OKULISTA);
     msg_creat(7, ID_KOL_PEDIATRA);
     
-    // Kolejka statystyk
     msgid_stat = msgget(key_stat, IPC_CREAT | 0600);
     if (msgid_stat == -1) perror("Blad msgget stat");
 
-    // Pamięć dzielona (tylko dla StanSOR - licznik kolejki i dostępność lekarzy)
     shmid = shmget(key_shm, sizeof(StanSOR), IPC_CREAT | 0600);
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     memset(stan, 0, sizeof(StanSOR));
@@ -266,7 +228,6 @@ int main(int argc, char *argv[])
     }
     shmdt(stan);
 
-    // Semafory
     semid = semget(key_sem, LICZBA_SEMAFOROW, IPC_CREAT | 0600);
     union semun arg;
     arg.val = 1; semctl(semid, SEM_DOSTEP_PAMIEC, SETVAL, arg);
@@ -283,26 +244,21 @@ int main(int argc, char *argv[])
     printf("[MAIN] Start systemu SOR...\n");
     printf("[MAIN] Nacisnij Ctrl+C aby rozpoczac ewakuacje.\n\n");
 
-    // Uruchom rejestrację 1 (okienko 2 będzie dynamicznie)
     pid_rejestracja_1 = uruchom_proces("./rejestracja", "SOR_rejestracja", "1");
-    
-    // Uruchom POZ i specjalistów
-    pid_poz = uruchom_proces("./lekarz", "lekarz", "0"); 
+    pid_poz = uruchom_proces("./lekarz", "SOR_POZ", "0"); 
 
-    const char* nazwy_lek[] = {"", "SOR_S_Kardiolog", "SOR_S_Neurolog", "SOR_S_Laryngolog", "SOR_S_Chirurg", "SOR_S_Okulista", "SOR_S_Pediatra"};
+    const char* nazwy_lek[] = {"", "SOR_Kardiolog", "SOR_Neurolog", "SOR_Laryngolog", "SOR_Chirurg", "SOR_Okulista", "SOR_Pediatra"};
     for(int i=1; i<=6; i++) {
         char buff[5];
         sprintf(buff, "%d", i); 
         pid_lekarze[i] = uruchom_proces("./lekarz", nazwy_lek[i], buff);
     }
 
-    // Raporty
     FILE *f = fopen(RAPORT_2, "w");
     if(f) { fprintf(f, "LOGI BRAMKI OKIENKA 2\n"); fclose(f); }
     f = fopen(RAPORT_3, "w");
     if(f) fclose(f);
 
-    // Proces dyrektora (opcjonalny)
     if (argc > 1 && strcmp(argv[1], "auto") == 0) {
         pid_dyrektor = fork();
         if (pid_dyrektor == 0) {
@@ -320,11 +276,10 @@ int main(int argc, char *argv[])
                 sleep(rand() % 5 + 2);
             }
             shmdt(stan_child);
-            exit(0);
+            _exit(0);
         }
     }
 
-    // Uruchom wątki
     if (pthread_create(&stat_tid, NULL, watek_statystyki, NULL) != 0) {
         perror("Blad tworzenia watku statystyk");
     }
@@ -332,19 +287,25 @@ int main(int argc, char *argv[])
         perror("Blad tworzenia watku bramki");
     }
 
-    // Uruchom generator
-    pid_gen = uruchom_proces("./generator", "generator", NULL);
+    pid_gen = uruchom_proces("./generator", "SOR_generator", NULL);
 
     printf("[MAIN] Symulacja 24h w toku...\n");
     
-    while (1) {
+    // Główna pętla
+    while (1) 
+    {
         pid_t finished = waitpid(pid_gen, NULL, WNOHANG);
         
-        if (finished == pid_gen) break;
+        if (finished == pid_gen) {
+            pid_gen = -1;
+            break;
+        }
         
         if (ewakuacja_rozpoczeta) {
+            // Czekaj na generator
+            printf("[MAIN] Czekam na generator...\n");
             waitpid(pid_gen, NULL, 0);
-            while(wait(NULL) > 0);
+            pid_gen = -1;
             break;
         }
         
@@ -356,25 +317,39 @@ int main(int argc, char *argv[])
     pthread_join(stat_tid, NULL);
     pthread_join(bramka_tid, NULL);
 
-    if (ewakuacja_rozpoczeta) {
-        przeprowadz_ewakuacje();
-    } else {
-        printf("\n[MAIN] Generator zakonczyl prace. Zamykanie systemu...\n");
+    printf("[MAIN] Generator zakonczyl prace.\n");
 
+    // Wyślij SIGINT do pozostałych procesów (lekarze, rejestracja)
+    if (pid_poz > 0) kill(pid_poz, SIGINT);
+    for (int i = 1; i <= 6; i++) {
+        if (pid_lekarze[i] > 0) kill(pid_lekarze[i], SIGINT);
+    }
+    if (pid_rejestracja_1 > 0) kill(pid_rejestracja_1, SIGINT);
+    if (pid_rejestracja_2 > 0) kill(pid_rejestracja_2, SIGINT);
+    if (pid_dyrektor > 0) kill(pid_dyrektor, SIGKILL);
+
+    // Zbierz wszystkie procesy
+    printf("[MAIN] Czekam na zakonczenie wszystkich procesow...\n");
+    while (wait(NULL) > 0 || errno == EINTR);
+    printf("[MAIN] Wszystkie procesy zakonczone.\n");
+
+    // Odczytaj statystyki ewakuacji
+    if (ewakuacja_rozpoczeta)
+    {
+        stan = (StanSOR*)shmat(shmid, NULL, 0);
+        if (stan != (void*)-1) {
+            ewak_sprzed_sor = stan->stan_przed_sor;
+            ewak_z_poczekalni = stan->stan_poczekalnia;
+            shmdt(stan);
+        }
+    }
+    else
+    {
         stan = (StanSOR*)shmat(shmid, NULL, 0);
         if (stan != (void*)-1) {
             stan->symulacja_trwa = 0;
             shmdt(stan);
         }
-
-        if (pid_dyrektor > 0) {
-            kill(pid_dyrektor, SIGKILL);
-            waitpid(pid_dyrektor, NULL, 0);
-        }
-
-       
-
-        while(wait(NULL) > 0);
     }
 
     pthread_mutex_lock(&stat_mutex);

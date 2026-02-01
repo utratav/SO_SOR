@@ -3,118 +3,149 @@
 #include "wspolne.h"
 
 int semid = -1;
+int shmid = -1;
+StanSOR *stan = NULL;
 
 volatile sig_atomic_t ewakuacja = 0;
-volatile sig_atomic_t sigchld_received = 0;
+volatile sig_atomic_t generowanie_aktywne = 1;
 
-int ewakuowani_z_poczekalni = 0;
-int ewakuowani_sprzed_sor = 0;
+// Statystyki ewakuacji
+int ewakuowani_suma_miejsc = 0;
+pthread_mutex_t zombie_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_t zombie_tid;
 
+// Lista dzieci do ubicia
+#define MAX_DZIECI 10000
+pid_t lista_dzieci[MAX_DZIECI];
+int liczba_dzieci = 0;
+pthread_mutex_t dzieci_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void handle_ewakuacja(int sig)
 {
     if (sig == SIGINT) 
     {
         ewakuacja = 1;
+        generowanie_aktywne = 0;
     }
 }
 
-int zbierz_zombie()
+void dodaj_dziecko(pid_t pid)
 {
-    int suma = 0;
+    pthread_mutex_lock(&dzieci_mutex);
+    if (liczba_dzieci < MAX_DZIECI)
+    {
+        lista_dzieci[liczba_dzieci++] = pid;
+    }
+    pthread_mutex_unlock(&dzieci_mutex);
+}
+
+void usun_dziecko(pid_t pid)
+{
+    pthread_mutex_lock(&dzieci_mutex);
+    for (int i = 0; i < liczba_dzieci; i++)
+    {
+        if (lista_dzieci[i] == pid)
+        {
+            lista_dzieci[i] = lista_dzieci[liczba_dzieci - 1];
+            liczba_dzieci--;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&dzieci_mutex);
+}
+
+void ubij_wszystkie_dzieci()
+{
+    pthread_mutex_lock(&dzieci_mutex);
+    for (int i = 0; i < liczba_dzieci; i++)
+    {
+        if (lista_dzieci[i] > 0)
+        {
+            kill(lista_dzieci[i], SIGINT);
+        }
+    }
+    pthread_mutex_unlock(&dzieci_mutex);
+}
+
+// Wątek zbierający zombie
+void* watek_zbieraj_zombie(void* arg)
+{
     int status;
     pid_t pid;
     
-    while ((pid = waitpid(-1, &status, WNOHANG)) > 0)
+    while (1)
     {
-        if (semid != -1)
+        // Sprawdź czy są jeszcze aktywne dzieci
+        int val = semctl(semid, SEM_GENERATOR, GETVAL);
+        if (val == MAX_PROCESOW && !generowanie_aktywne)
         {
-            struct sembuf unlock = {SEM_GENERATOR, 1, SEM_UNDO};
-            semop(semid, &unlock, 1);
+            break;
         }
         
-        if (WIFEXITED(status)) {
-            suma += WEXITSTATUS(status);
-        }
-    }
-    sigchld_received = 0;
-    return suma;
-}
-
-void zabij_dzieci_i_licz_ewakuowanych()
-{
-    printf("\n[GENERATOR] Rozpoczynam ewakuacje pacjentow...\n");
-    
-    ewakuowani_sprzed_sor = semctl(semid, SEM_MIEJSCA_SOR, GETNCNT);
-    printf("[GENERATOR] Pacjentow czekajacych przed SOR (GETNCNT): %d\n", ewakuowani_sprzed_sor);
-    
-    kill(0, SIGINT);
-    
-    printf("[GENERATOR] Wyslano SIGINT do wszystkich potomkow\n");
-    
-    usleep(200000); 
-    
-    int suma_miejsc = 0;
-    int status;
-    pid_t pid;
-    
-    // Zbieraj przez max 5 sekund
-    for (int i = 0; i < 50; i++) {
-        while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-            if (WIFEXITED(status)) {
-                suma_miejsc += WEXITSTATUS(status);
+        pid = waitpid(-1, &status, WNOHANG);
+        
+        if (pid > 0) 
+        {
+            usun_dziecko(pid);
+            
+            struct sembuf unlock = {SEM_GENERATOR, 1, SEM_UNDO};
+            semop(semid, &unlock, 1);
+            
+            if (WIFEXITED(status)) 
+            {
+                pthread_mutex_lock(&zombie_mutex);
+                ewakuowani_suma_miejsc += WEXITSTATUS(status);
+                pthread_mutex_unlock(&zombie_mutex);
             }
         }
-        if (pid == -1 && errno == ECHILD) break;
-        usleep(100000);
-    }
-    
-    // Ostatnie zbieranie
-    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        if (WIFEXITED(status)) {
-            suma_miejsc += WEXITSTATUS(status);
+        else
+        {
+            usleep(10000);
         }
     }
     
-    ewakuowani_z_poczekalni = suma_miejsc;
-    printf("[GENERATOR] Ewakuowano (suma miejsc z exit codes): %d\n", suma_miejsc);
+    return NULL;
 }
 
 int main(int argc, char* argv[])
 {
-    struct sigaction sa_chld;
-    sa_chld.sa_handler = handle_sigchld;
-    sigemptyset(&sa_chld.sa_mask);
-    sa_chld.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-    sigaction(SIGCHLD, &sa_chld, NULL);
-
     struct sigaction sa_int;
     sa_int.sa_handler = handle_ewakuacja;
     sigemptyset(&sa_int.sa_mask);
     sa_int.sa_flags = 0;
     sigaction(SIGINT, &sa_int, NULL);
     
+    signal(SIGCHLD, SIG_DFL);
     signal(SIGTSTP, SIG_DFL);
     signal(SIGCONT, SIG_DFL);
 
     key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
+    key_t key_shm = ftok(FILE_KEY, ID_SHM_MEM);
     
     semid = semget(key_sem, 0, 0);
     if (semid == -1) {
         perror("generator: blad semget");
         exit(1);
     }
+    
+    shmid = shmget(key_shm, 0, 0);
+    if (shmid != -1) {
+        stan = (StanSOR*)shmat(shmid, NULL, 0);
+        if (stan == (void*)-1) stan = NULL;
+    }
 
     srand(time(NULL) ^ getpid());
+
+    if (pthread_create(&zombie_tid, NULL, watek_zbieraj_zombie, NULL) != 0)
+    {
+        perror("generator: blad pthread_create");
+        exit(1);
+    }
 
     zapisz_raport(KONSOLA, semid, "\n[GENERATOR] Start symulacji. Cel: %d pacjentow (24h).\n", PACJENCI_NA_DOBE);
 
     for (int i = 0; i < PACJENCI_NA_DOBE && !ewakuacja; i++)
     {
-        if (sigchld_received) {
-            zbierz_zombie();
-        }
-        
         struct sembuf zajmij = {SEM_GENERATOR, -1, SEM_UNDO};
         
         if (semop(semid, &zajmij, 1) == -1)
@@ -140,10 +171,13 @@ int main(int argc, char* argv[])
         pid_t pid = fork();
         if (pid == 0)
         {
-            signal(SIGCHLD, SIG_DFL);
             execl("./pacjent", "pacjent", NULL);
             perror("generator: execl failed");
-            exit(1);
+            _exit(1);
+        }
+        else if (pid > 0)
+        {
+            dodaj_dziecko(pid);
         }
         else if (pid == -1)
         {
@@ -155,25 +189,42 @@ int main(int argc, char* argv[])
         }
     }
 
-    if (ewakuacja) {
+    generowanie_aktywne = 0;
+    
+    if (ewakuacja) 
+    {
         zapisz_raport(KONSOLA, semid, "[GENERATOR] EWAKUACJA! Przestaje generowac pacjentow.\n");
         
-        zabij_dzieci_i_licz_ewakuowanych();
+        // Odczytaj statystyki
+        if (stan != NULL)
+        {
+            struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
+            struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
+            semop(semid, &lock, 1);
+            printf("[GENERATOR] Pacjentow przed SOR: %d\n", stan->stan_przed_sor);
+            printf("[GENERATOR] Pacjentow w poczekalni: %d\n", stan->stan_poczekalnia);
+            semop(semid, &unlock, 1);
+        }
         
-        zapisz_raport(KONSOLA, semid, "[GENERATOR] Ewakuacja zakonczona. Koncze prace.\n");
-    } else {
-        zapisz_raport(KONSOLA, semid, "[GENERATOR] Wszyscy pacjenci wygenerowani. Czekam na wyjscie ostatnich osob...\n");
-        
-        while (wait(NULL) > 0 || errno == EINTR);
-        
-        zapisz_raport(KONSOLA, semid, "[GENERATOR] Koniec pracy generatora.\n");
+        // AKTYWNIE UBIJ WSZYSTKIE DZIECI
+        printf("[GENERATOR] Wysylam SIGINT do wszystkich dzieci...\n");
+        ubij_wszystkie_dzieci();
+    } 
+    else 
+    {
+        zapisz_raport(KONSOLA, semid, "[GENERATOR] Wszyscy pacjenci wygenerowani. Czekam na zakonczenie obslugi...\n");
     }
     
+    pthread_join(zombie_tid, NULL);
     
-    if (ewakuacja) {
-        printf("[GENERATOR] Statystyki: sprzed_sor=%d, z_poczekalni=%d\n", 
-               ewakuowani_sprzed_sor, ewakuowani_z_poczekalni);
+    if (ewakuacja)
+    {
+        printf("[GENERATOR] Suma miejsc z exit codes: %d\n", ewakuowani_suma_miejsc);
     }
+    
+    zapisz_raport(KONSOLA, semid, "[GENERATOR] Koniec pracy generatora.\n");
+    
+    if (stan != NULL) shmdt(stan);
     
     return 0;
 }

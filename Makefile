@@ -22,7 +22,7 @@ rejestracja: rejestracja.c wspolne.h
 
 
 generator: generuj.c wspolne.h
-	$(CC) $(CFLAGS) -o generator generuj.c
+	$(CC) $(CFLAGS) -o generator generuj.c -lpthread -lpthread
 
 
 clean:

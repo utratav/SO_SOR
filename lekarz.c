@@ -63,13 +63,13 @@ const char* dialog[7] = {
 
 void handle_sig(int sig)
 {
-    if(sig == SIG_LEKARZ_ODDZIAL)
+    if (sig == SIG_LEKARZ_ODDZIAL)
     {
         wezwanie_na_oddzial = 1;
     }
-    else if(sig == SIGINT)
+    else if (sig == SIGINT)
     {
-        zapisz_raport(KONSOLA, semid, "[%s] Otrzymano sygnal zakonczenia pracy.\n", int_to_lekarz(typ_lekarza));
+        // Ewakuacja - natychmiastowe zakończenie
         _exit(0);
     }
 }
@@ -78,11 +78,9 @@ void praca_poz(int msgid_poz)
 {
     KomunikatPacjenta pacjent;   
 
-    while(!koniec_pracy)
+    while (!koniec_pracy)
     {
-        
-
-        if(msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0, IPC_NOWAIT) == -1)
+        if (msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0, IPC_NOWAIT) == -1)
         {
             if (errno == ENOMSG) {
                 usleep(100000);
@@ -93,7 +91,10 @@ void praca_poz(int msgid_poz)
             continue;
         } 
 
-                
+        // Sprawdź czy pacjent jeszcze żyje
+        if (kill(pacjent.pacjent_pid, 0) == -1) {
+            continue; // Pacjent już nie istnieje
+        }
 
         int chory = 1;
         int r = rand() % 100;
@@ -115,7 +116,6 @@ void praca_poz(int msgid_poz)
             pacjent.typ_lekarza = 0;
             pacjent.skierowanie = 1;  
             
-            if(koniec_pracy) break;
             zapisz_raport(KONSOLA, semid, "[POZ] Pacjent %d zdrowy - odeslany do domu\n", pacjent.pacjent_pid);
         }
 
@@ -137,10 +137,9 @@ void praca_poz(int msgid_poz)
 
         pacjent.mtype = pacjent.pacjent_pid;
 
-        if(koniec_pracy) break;
         zapisz_raport(KONSOLA, semid, "[POZ] Przekazanie Pacjenta %d do %s\n", pacjent.pacjent_pid, int_to_lekarz(pacjent.typ_lekarza));
 
-        if(msgsnd(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
+        if (msgsnd(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
         {
             if (errno != EINTR)
                 perror("poz - blad wysylania do specjalisty");
@@ -158,9 +157,9 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
     KomunikatPacjenta pacjent;
     const char* jaki_lekarz = int_to_lekarz(typ_lekarza);
 
-    while(!koniec_pracy)
+    while (!koniec_pracy)
     {
-        if(wezwanie_na_oddzial)
+        if (wezwanie_na_oddzial)
         {
             semop(semid, &lock, 1);
             stan->dostepni_specjalisci[typ_lekarza] = 0;
@@ -195,8 +194,7 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
             wezwanie_na_oddzial = 0;
         }
 
-        if(koniec_pracy) break;
-        if(msgrcv(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), -3, IPC_NOWAIT) == -1)
+        if (msgrcv(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), -3, IPC_NOWAIT) == -1)
         {
             if (errno == ENOMSG) {
                 usleep(100000);
@@ -207,7 +205,10 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
             break;            
         }
 
-        
+        // Sprawdź czy pacjent jeszcze żyje
+        if (kill(pacjent.pacjent_pid, 0) == -1) {
+            continue; // Pacjent już nie istnieje
+        }
 
         int r = rand() % 1000;
 
@@ -216,14 +217,12 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
         else if (r < 995) skierowanie = 2;
         else skierowanie = 3;
 
-        if(koniec_pracy) break;
         zapisz_raport(KONSOLA, semid, "[%s] %s Pacjent %d %s\n", 
             jaki_lekarz, dialog[typ_lekarza], pacjent.pacjent_pid, int_2_skierowanie(skierowanie));
 
         pacjent.skierowanie = skierowanie;
         pacjent.mtype = pacjent.pacjent_pid;
-        
-        if(koniec_pracy) break;
+
         if (msgsnd(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
         {
             if (errno != EINTR)
@@ -244,10 +243,6 @@ int main(int argc, char*argv[])
     sigaction(SIG_LEKARZ_ODDZIAL, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
     
-    // Ignoruj SIGINT - lekarze nie reagują bezpośrednio na Ctrl+C
-    
-    
-    // SIGTSTP (Ctrl+Z) i SIGCONT - domyślne zachowanie
     signal(SIGTSTP, SIG_DFL);
     signal(SIGCONT, SIG_DFL);
 
@@ -285,7 +280,12 @@ int main(int argc, char*argv[])
     {
         praca_specjalista(typ_lekarza, msgid_spec[typ_lekarza]);
     }
-    pause();
+
+    // Czekaj na sygnał zakończenia
+    while (!koniec_pracy) {
+        pause();
+    }
+    
     zapisz_raport(KONSOLA, semid, "[%s] Koncze prace.\n", int_to_lekarz(typ_lekarza));
     return 0;
 }

@@ -1,17 +1,20 @@
-
 #define _GNU_SOURCE
 
 #include "wspolne.h"
 
 int nr_okienka;
 int semid = -1;
-volatile sig_atomic_t koniec_pracy = 0;
 
 void handle_sig(int sig)
 {
     if (sig == SIGINT) 
     {
-        zapisz_raport(KONSOLA, semid, "[Rejestracja] koniec pracy okienka %d", nr_okienka);
+        // Ewakuacja - natychmiastowe zakończenie
+        _exit(0);
+    }
+    else if (sig == SIGTERM)
+    {
+        // Normalne zakończenie (zamknięcie okienka 2)
         _exit(0);
     }
 }
@@ -23,7 +26,7 @@ int main(int argc, char*argv[])
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, NULL);
-    
+    sigaction(SIGTERM, &sa, NULL);
     
     signal(SIGTSTP, SIG_DFL);
     signal(SIGCONT, SIG_DFL);
@@ -46,11 +49,10 @@ int main(int argc, char*argv[])
 
     KomunikatPacjenta pacjent;
 
-    
+    zapisz_raport(KONSOLA, semid, "[Rejestracja %d] Otwieram okienko\n", nr_okienka);
 
-    while(1)
+    while (1)
     {
-        
         ssize_t status = msgrcv(msgid_we, &pacjent, sizeof(KomunikatPacjenta) - sizeof(long), -2, IPC_NOWAIT);
 
         if (status == -1)
@@ -64,22 +66,23 @@ int main(int argc, char*argv[])
             continue;
         }
 
-        
+        // Sprawdź czy pacjent jeszcze żyje
+        if (kill(pacjent.pacjent_pid, 0) == -1) {
+            continue; // Pacjent już nie istnieje - pomiń
+        }
 
         pacjent.mtype = pacjent.pacjent_pid; 
-        if(msgsnd(msgid_we, &pacjent, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
+        if (msgsnd(msgid_we, &pacjent, sizeof(KomunikatPacjenta) - sizeof(long), 0) == -1)
         {
             if (errno != EINTR)
                 perror("Rejestracja - blad msgsnd");
         }
         else
         {
-            if(koniec_pracy) break;
             zapisz_raport(KONSOLA, semid, "[Rejestracja %d] pacjent %d przekazany do POZ\n",
                 nr_okienka, pacjent.pacjent_pid);
         }        
     }
-    
     
     return 0;
 }
