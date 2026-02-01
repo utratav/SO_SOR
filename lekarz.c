@@ -67,11 +67,10 @@ void handle_sig(int sig)
     {
         wezwanie_na_oddzial = 1;
     }
-    else if(sig == SIGTERM)
+    else if(sig == SIGINT)
     {
-        // SIGTERM = koniec pracy (wysyłany przez main przy ewakuacji/zamknięciu)
         zapisz_raport(KONSOLA, semid, "[%s] Otrzymano sygnal zakonczenia pracy.\n", int_to_lekarz(typ_lekarza));
-        koniec_pracy = 1;
+        _exit(0);
     }
 }
 
@@ -94,7 +93,7 @@ void praca_poz(int msgid_poz)
             continue;
         } 
 
-        
+                
 
         int chory = 1;
         int r = rand() % 100;
@@ -116,6 +115,7 @@ void praca_poz(int msgid_poz)
             pacjent.typ_lekarza = 0;
             pacjent.skierowanie = 1;  
             
+            if(koniec_pracy) break;
             zapisz_raport(KONSOLA, semid, "[POZ] Pacjent %d zdrowy - odeslany do domu\n", pacjent.pacjent_pid);
         }
 
@@ -137,6 +137,7 @@ void praca_poz(int msgid_poz)
 
         pacjent.mtype = pacjent.pacjent_pid;
 
+        if(koniec_pracy) break;
         zapisz_raport(KONSOLA, semid, "[POZ] Przekazanie Pacjenta %d do %s\n", pacjent.pacjent_pid, int_to_lekarz(pacjent.typ_lekarza));
 
         if(msgsnd(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
@@ -194,7 +195,7 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
             wezwanie_na_oddzial = 0;
         }
 
-        // Użyj IPC_NOWAIT żeby móc sprawdzać koniec_pracy
+        if(koniec_pracy) break;
         if(msgrcv(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), -3, IPC_NOWAIT) == -1)
         {
             if (errno == ENOMSG) {
@@ -206,6 +207,8 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
             break;            
         }
 
+        
+
         int r = rand() % 1000;
 
         int skierowanie = 0;
@@ -213,12 +216,14 @@ void praca_specjalista(int typ_lekarza, int msgid_spec)
         else if (r < 995) skierowanie = 2;
         else skierowanie = 3;
 
+        if(koniec_pracy) break;
         zapisz_raport(KONSOLA, semid, "[%s] %s Pacjent %d %s\n", 
             jaki_lekarz, dialog[typ_lekarza], pacjent.pacjent_pid, int_2_skierowanie(skierowanie));
 
         pacjent.skierowanie = skierowanie;
         pacjent.mtype = pacjent.pacjent_pid;
-
+        
+        if(koniec_pracy) break;
         if (msgsnd(msgid_spec, &pacjent, sizeof(pacjent) - sizeof(long), 0) == -1)
         {
             if (errno != EINTR)
@@ -237,10 +242,10 @@ int main(int argc, char*argv[])
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIG_LEKARZ_ODDZIAL, &sa, NULL);
-    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
     
     // Ignoruj SIGINT - lekarze nie reagują bezpośrednio na Ctrl+C
-    signal(SIGINT, SIG_IGN);
+    
     
     // SIGTSTP (Ctrl+Z) i SIGCONT - domyślne zachowanie
     signal(SIGTSTP, SIG_DFL);
@@ -280,7 +285,7 @@ int main(int argc, char*argv[])
     {
         praca_specjalista(typ_lekarza, msgid_spec[typ_lekarza]);
     }
-
+    pause();
     zapisz_raport(KONSOLA, semid, "[%s] Koncze prace.\n", int_to_lekarz(typ_lekarza));
     return 0;
 }
