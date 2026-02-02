@@ -21,42 +21,41 @@ void zbierz_zombie() {
     sigchld_received = 0;
 }
 
-void procedura_ewakuacji() {
-    signal(SIGINT, SIG_IGN); // Ignoruj kolejne SIGINT
-    signal(SIGTERM, SIG_IGN); // Ignoruj SIGTERM który sam zaraz wyśle do grupy
+void procedura_ewakuacji(int liczba_wygenerowanych) {
+    signal(SIGINT, SIG_IGN); 
+    signal(SIGTERM, SIG_IGN); 
 
-    printf("\n[GENERATOR] Robie SNAPSHOT pamieci dzielonej...\n");
+    printf("\n[GENERATOR] Robie SNAPSHOT pamieci dzielonej (BLOKADA SWIATA)...\n");
 
-    // === SNAPSHOT (Bez zapisywania przez 10000 dzieci) ===
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     if (stan != (void*)-1) {
-        // 1. Ilu jest przed wejściem? (Czekają na semaforze miejsc)
-        // GETNCNT zwraca liczbę procesów czekających na podniesienie semafora
-        int waiting_procs = semctl(semid, SEM_MIEJSCA_SOR, GETNCNT);
-        stan->ewakuowani_sprzed_sor = waiting_procs;
+        struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
+        struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
+        semop(semid, &lock, 1);
 
-        // 2. Ilu jest w środku? (Zajęte miejsca w semaforze)
-        // GETVAL zwraca aktualną wartość (ile miejsc wolnych).
-        // Max - Wolne = Zajęte (Suma wag).
-        int free_spots = semctl(semid, SEM_MIEJSCA_SOR, GETVAL);
-        int occupied = MAX_PACJENTOW - free_spots;
+        int weszlo = stan->ile_weszlo_ogolem;
+        int wyszlo = stan->ile_wyszlo_ogolem;
         
-        // Korekta na kolejkę rejestracji (żeby raport był spójny)
-        // occupied to suma wszystkich w środku.
-        stan->ewakuowani_z_poczekalni = occupied;
+    
+        stan->snap_w_srodku = weszlo - wyszlo;
+        
+    
+        stan->snap_przed_sor = liczba_wygenerowanych - weszlo;
+        if (stan->snap_przed_sor < 0) stan->snap_przed_sor = 0; // Zabezpieczenie
 
+        printf("[GENERATOR] Snapshot: Wygenerowano=%d, Weszlo=%d, Wyszlo=%d\n", liczba_wygenerowanych, weszlo, wyszlo);
+        printf("[GENERATOR] Snapshot: W srodku=%d, Przed SOR=%d\n", stan->snap_w_srodku, stan->snap_przed_sor);
+
+        printf("[GENERATOR] Zabijam pacjentow (SIGTERM)...\n");
+        kill(0, SIGTERM);
+
+        semop(semid, &unlock, 1);
         shmdt(stan);
-        printf("[GENERATOR] Snapshot: W srodku (waga)=%d, W kolejce (proc)=%d\n", occupied, waiting_procs);
     }
-
-    printf("[GENERATOR] Zabijam pacjentow (SIGTERM)...\n");
-    kill(0, SIGTERM); // Zabij całą grupę (Main ignoruje, Pacjenci obsługują)
 
     int suma_exit_code = 0;
     int status;
     pid_t pid;
-    
-    // Zbieranie wszystkich
     while ((pid = waitpid(-1, &status, 0)) > 0) {
         if (WIFEXITED(status)) {
             suma_exit_code += WEXITSTATUS(status);
@@ -77,7 +76,7 @@ int main(int argc, char* argv[])
 
     sa.sa_handler = handle_ewakuacja;
     sa.sa_flags = 0;
-    sigaction(SIGINT, &sa, NULL); // Odbiera SIGINT od Main
+    sigaction(SIGINT, &sa, NULL); 
     
     semid = semget(ftok(FILE_KEY, ID_SEM_SET), 0, 0);
     shmid = shmget(ftok(FILE_KEY, ID_SHM_MEM), 0, 0);
@@ -86,7 +85,8 @@ int main(int argc, char* argv[])
     srand(time(NULL) ^ getpid());
     zapisz_raport(KONSOLA, semid, "\n[GENERATOR] Start.\n");
 
-    for (int i = 0; i < PACJENCI_NA_DOBE; i++)
+    int i = 0;
+    for (i = 0; i < PACJENCI_NA_DOBE; i++)
     {
         if (ewakuacja) break;
         if (sigchld_received) zbierz_zombie();
@@ -110,11 +110,10 @@ int main(int argc, char* argv[])
     }
 
     if (ewakuacja) {
-        procedura_ewakuacji();
+        procedura_ewakuacji(i); // Przekazujemy ile faktycznie wygenerowano
     } else {
         zapisz_raport(KONSOLA, semid, "[GENERATOR] Koniec generowania. Czekam na dzieci...\n");
         while(wait(NULL) > 0);
     }
-    
     return 0;
 }

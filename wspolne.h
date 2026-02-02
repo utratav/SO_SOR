@@ -16,7 +16,7 @@
 #include <stdarg.h> 
 #include <pthread.h>
 #include <sys/wait.h>
-#include <fcntl.h> // Potrzebne do open/O_APPEND
+#include <fcntl.h>
 
 #define FILE_KEY "."
 
@@ -36,12 +36,12 @@
 #define ID_SEM_SET 'M'
 #define ID_SEM_LIMITS 'X'
 
+// DUŻE DANE TESTOWE
 #define PACJENCI_NA_DOBE 50000
 #define MAX_PACJENTOW 8000
 #define MAX_PROCESOW 10000
 #define INT_LIMIT_KOLEJEK 500
 
-// Pliki raportów
 #define RAPORT_1 "raport1.txt"
 #define RAPORT_2 "raport2.txt"
 #define RAPORT_3 "raport3.txt"
@@ -84,8 +84,12 @@ typedef struct
     int dostepni_specjalisci[7];
     int dlugosc_kolejki_rejestracji;
     int czy_okienko_2_otwarte;
-    int ewakuowani_z_poczekalni;
-    int ewakuowani_sprzed_sor;
+    
+    int ile_weszlo_ogolem;  
+    int ile_wyszlo_ogolem;  
+    
+    int snap_w_srodku;
+    int snap_przed_sor;
 } StanSOR;
 
 typedef struct {
@@ -122,35 +126,19 @@ union semun {
     unsigned short *array;
 };
 
-// === NOWA, SZYBKA FUNKCJA LOGOWANIA (BEZ SEMAFORA) ===
 static inline void zapisz_raport(const char* filename, int semid, const char* format, ...) {
-    (void)semid; // Ignorujemy semid - nie jest juz potrzebny, ale zostawiamy argument dla kompatybilnosci
-    
-    char bufor[1024]; // Lokalny bufor na sformatowaną linię
+    (void)semid;
+    char bufor[1024]; 
     va_list args;
-
-    // 1. Szybkie formatowanie w pamięci RAM
     va_start(args, format);
     int len = vsnprintf(bufor, sizeof(bufor), format, args);
     va_end(args);
-
     if (len <= 0) return;
-
-    // 2. Atomowy zapis
     if (filename == KONSOLA) {
-        // Zapis na standardowe wyjście (deskryptor 1)
-        // write jest bezpieczniejszy niż printf przy wielu wątkach
         write(STDOUT_FILENO, bufor, len);
-    }
-    else {
-        // O_APPEND gwarantuje atomowość zapisu na koniec pliku w Linuxie
-        // O_CREAT | O_WRONLY | O_APPEND
-        // Uprawnienia 0666 (rw-rw-rw-)
+    } else {
         int fd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0666);
-        if (fd != -1) {
-            write(fd, bufor, len); // Jeden syscall zamiast fopen/fprintf/fclose
-            close(fd);
-        }
+        if (fd != -1) { write(fd, bufor, len); close(fd); }
     }
 }
 
@@ -159,13 +147,12 @@ static inline void podsumowanie(StatystykiLokalne *stat, StanSOR *stan)
     double p = (double)stat->obs_pacjenci; 
     if (p == 0) p = 1.0; 
     
-    int ewak_z_poczekalni = stan->ewakuowani_z_poczekalni;
-    int ewak_sprzed_sor = stan->ewakuowani_sprzed_sor;
+    int ewak_z_poczekalni = stan->snap_w_srodku;
+    int ewak_sprzed_sor = stan->snap_przed_sor;
 
-    char bufor[4096]; // Duży bufor na cały raport końcowy
+    char bufor[4096];
     int pos = 0;
 
-    // Budujemy cały raport w pamięci, żeby wypisać go "na raz"
     pos += sprintf(bufor + pos, "\n==============================================\n");
     pos += sprintf(bufor + pos, "         RAPORT KONCOWY (PODSUMOWANIE)        \n");
     pos += sprintf(bufor + pos, "==============================================\n");
@@ -188,13 +175,12 @@ static inline void podsumowanie(StatystykiLokalne *stat, StanSOR *stan)
     pos += sprintf(bufor + pos, "Skierowani na oddzial: %d (oczekiwano ok.: %d)\n", stat->decyzja[2], (int)(0.145 * p + 0.5));
     pos += sprintf(bufor + pos, "Do innej placowki:     %d (oczekiwano ok.: %d)\n", stat->decyzja[3], (int)(0.005 * p + 0.5));
     
-    pos += sprintf(bufor + pos, "\n--- RAPORT EWAKUACJI (TEST SYNCHRONIZACJI) ---\n");
+    pos += sprintf(bufor + pos, "\n--- RAPORT EWAKUACJI (DANE Z PAMIESCI - SNAPSHOT) ---\n");
     pos += sprintf(bufor + pos, "Ewakuowani z poczekalni (W_SRODKU): %d\n", ewak_z_poczekalni);
     pos += sprintf(bufor + pos, "Ewakuowani sprzed SOR (W_KOLEJCE):  %d\n", ewak_sprzed_sor);
     pos += sprintf(bufor + pos, "RAZEM (wg StanSOR):                 %d\n", ewak_z_poczekalni + ewak_sprzed_sor);
     pos += sprintf(bufor + pos, "==============================================\n");
 
-    // Jeden atomiczny write na koniec
     write(STDOUT_FILENO, bufor, pos);
 }
 #endif

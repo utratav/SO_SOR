@@ -137,22 +137,27 @@ pid_t uruchom_proces(const char* prog, const char* name, const char* arg1) {
     return pid;
 }
 
-void przeprowadz_ewakuacje() {
+void przeprowadz_ewakuacje()
+{
     printf("\n=== ROZPOCZYNAM EWAKUACJE SOR ===\n");
     
-    // 1. Daj znać Generatorowi (SIGINT). On zrobi snapshot i zabije pacjentów (SIGTERM).
+    // 1. Najpierw zabij personel odbierający pacjentów (Rejestracja/Lekarze)
+    // Dzięki temu nikt nie wyjmie pacjenta z kolejki w trakcie snapshota
+    if (pid_rejestracja_1 > 0) kill(pid_rejestracja_1, SIGTERM);
+    if (pid_poz > 0) kill(pid_poz, SIGTERM);
+    for(int i=1; i<=6; i++) if(pid_lekarze[i] > 0) kill(pid_lekarze[i], SIGTERM);
+
+    // 2. Daj chwilę na zamknięcie
+    usleep(10000); 
+
+    // 3. Powiadom generator (zrobi snapshot i zabije pacjentów)
     if (pid_gen > 0) {
         kill(pid_gen, SIGINT);
         waitpid(pid_gen, NULL, 0);
     }
     
-    // 2. Zabij resztę personelu ręcznie
-    if (pid_rejestracja_1 > 0) kill(pid_rejestracja_1, SIGTERM);
-    if (pid_poz > 0) kill(pid_poz, SIGTERM);
-    for(int i=1; i<=6; i++) if(pid_lekarze[i] > 0) kill(pid_lekarze[i], SIGTERM);
     if (pid_dyrektor > 0) kill(pid_dyrektor, SIGKILL);
     
-    // Czekaj na wszystkich
     while(wait(NULL) > 0);
 }
 
@@ -204,7 +209,7 @@ int main(int argc, char *argv[]) {
     printf("[MAIN] Start systemu SOR... (Max pacjentow: %d)\n", MAX_PACJENTOW);
     pid_rejestracja_1 = uruchom_proces("./rejestracja", "SOR_rejestracja", "1");
     pid_poz = uruchom_proces("./lekarz", "lekarz", "0"); 
-    const char* nazwy_lek[] = {"", "Kardiolog", "Neurolog", "Laryngolog", "Chirurg", "Okulista", "Pediatra"};
+    const char* nazwy_lek[] = {"", "SOR_S_Kardiolog", "SOR_S_Neurolog", "SOR_S_Laryngolog", "SOR_S_Chirurg", "SOR_S_Okulista", "SOR_S_Pediatra"};
     for(int i=1; i<=6; i++) {
         char buff[5]; sprintf(buff, "%d", i); 
         pid_lekarze[i] = uruchom_proces("./lekarz", nazwy_lek[i], buff);
@@ -254,10 +259,13 @@ int main(int argc, char *argv[]) {
         printf("\n[MAIN] Koniec symulacji. Zamykanie...\n");
         stan = (StanSOR*)shmat(shmid, NULL, 0);
         if (stan != (void*)-1) { stan->symulacja_trwa = 0; shmdt(stan); }
+        
+        // Zamykamy personel najpierw
         if (pid_rejestracja_1 > 0) kill(pid_rejestracja_1, SIGTERM);
         if (pid_poz > 0) kill(pid_poz, SIGTERM);
         for(int i=1; i<=6; i++) if(pid_lekarze[i] > 0) kill(pid_lekarze[i], SIGTERM);
         if (pid_dyrektor > 0) kill(pid_dyrektor, SIGKILL);
+        
         while(wait(NULL) > 0);
     }
 
