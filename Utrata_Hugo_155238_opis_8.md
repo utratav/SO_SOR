@@ -1212,14 +1212,14 @@ System utrzymuje drugie okienko otwarte mimo spadku poniżej progu otwarcia 400,
 
 <img width="484" height="616" alt="image" src="https://github.com/user-attachments/assets/1d9734c8-2389-48f0-ba74-adb228401801" />
 
-**Cel testu:  Weryfikacja poprawności synchronizacji procesów oraz spójności danych statystycznych przy dużym obciążeniu systemu (50 000 pacjentów). 
+**Cel testu:**  Weryfikacja poprawności synchronizacji procesów oraz spójności danych statystycznych przy dużym obciążeniu systemu (50 000 pacjentów). 
 
 * Test sprawdza, czy suma obsłużonych pacjentów zgadza się z liczbą wygenerowanych procesów (czy żaden proces nie został "zgubiony") oraz czy rozkład losowy (triaż, decyzje) mieści się w założonych granicach prawdopodobieństwa.
 
-** Wyniki testu: Wygenerowano pacjentów: 50 000
+* **Wyniki testu:** Wygenerowano pacjentów: 50 000
 
 * Obsłużono ogółem: 50 000
-* 
+  
 * Suma decyzji końcowych (Odesłani do domu + Skierowani na oddział + Do innej placówki):$42910 + 6860 + 230 = 50 000
 
 * Wniosek: Bilans pacjentów jest idealny. Żaden proces nie został utracony ani pominięty w statystykach.
@@ -1230,21 +1230,20 @@ System utrzymuje drugie okienko otwarte mimo spadku poniżej progu otwarcia 400,
   
 * Suma pacjentów przyjętych przez specjalistów (Kardiolog...Pediatra): 7788 + 7945 + 7893 + 7836 + 7774 + 8314 = 47 550
   
-** Wniosek: Przekazywanie pacjentów na linii POZ -> Specjalista działa poprawnie.
-** Rozkład statystyczny: Wyniki rzeczywiste są bardzo zbliżone do wartości oczekiwanych (np. Czerwony: 4946 vs oczekiwano ok. 5000). Niewielkie odchylenia są naturalnym efektem działania generatora liczb losowych (rand()) i mieszczą się w normie.
+* **Wniosek:** Przekazywanie pacjentów na linii POZ -> Specjalista działa poprawnie.
+* **Rozkład statystyczny:** Wyniki rzeczywiste są bardzo zbliżone do wartości oczekiwanych (np. Czerwony: 4946 vs oczekiwano ok. 5000). Niewielkie odchylenia są naturalnym efektem działania generatora liczb losowych (rand()) i mieszczą się w normie.
 
-### Test 3: Ewakuacja
+### Test 3: Wezwanie na oddział wszystkich specjalistów
 
-Test 3: Stabilność systemu przy masowym wezwaniu na oddział (SIGUSR2)
-Cel testu: Weryfikacja odporności systemu na sygnał SIGUSR2 (symulacja wezwania lekarza na oddział przez Dyrektora). Test ma na celu sprawdzenie sytuacji ekstremalnej, w której wszyscy specjaliści jednocześnie przerywają pracę na SOR, udają się na oddział (symulowane przez sleep), a następnie wracają do obsługi kolejki.
+**Cel testu:** Weryfikacja odporności systemu na sygnał SIGUSR2 (symulacja wezwania lekarza na oddział przez Dyrektora). Test ma na celu sprawdzenie sytuacji ekstremalnej, w której wszyscy specjaliści jednocześnie przerywają pracę na SOR, udają się na oddział (symulowane przez sleep), a następnie wracają do obsługi kolejki.
 
-Metodyka: W trakcie pełnego obciążenia systemu, w osobnej konsoli wykonano polecenie systemowe wysyłające sygnał do wszystkich procesów specjalistów jednocześnie:
+**Metodyka:** W trakcie pełnego obciążenia systemu, w osobnej konsoli wykonano polecenie systemowe wysyłające sygnał do wszystkich procesów specjalistów jednocześnie:
 
 *pkill -SIGUSR2 -f SOR_S_*
 
 Flaga -f SOR_S_ pozwala na uchwycenie wszystkich procesów potomnych, których nazwa zaczyna się od zdefiniowanego w kodzie prefiksu (np. SOR_S_Kardiolog, SOR_S_Chirurg itd.).
 
-Wyniki testu:
+**Wyniki testu:**
 
 <img width="828" height="976" alt="Zrzut ekranu 2026-02-02 082026" src="https://github.com/user-attachments/assets/fd862eb6-1058-4119-864a-9e029c24b75a" />
 
@@ -1271,9 +1270,9 @@ Wyniki testu:
 
 ### Test 4: Procedura nagłej ewakuacji (SIGINT)
 
-**Cel: Weryfikacja poprawności mechanizmu "Snapshota" (zamrożenia stanu pamięci) oraz zgodności liczby pacjentów przy nagłym przerwaniu symulacji (Ctrl+C).
+**Cel:** Weryfikacja poprawności mechanizmu "Snapshota" (zamrożenia stanu pamięci) oraz zgodności liczby pacjentów przy nagłym przerwaniu symulacji (Ctrl+C).
 
-**Wyniki:
+**Wyniki:**
 
 <img width="466" height="752" alt="Zrzut ekranu 2026-02-02 083444" src="https://github.com/user-attachments/assets/b6cbb1d9-54e2-49ce-88a8-dd53d3122cd0" />
 
