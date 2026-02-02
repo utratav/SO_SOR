@@ -26,7 +26,7 @@ volatile sig_atomic_t ewakuacja_rozpoczeta = 0;
 StatystykiLokalne statystyki;
 pthread_mutex_t stat_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// ... (watek_raport_specjalistow BEZ ZMIAN)
+
 void* watek_raport_specjalistow(void* arg) {
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     if (stan == (void*)-1) return NULL;
@@ -43,7 +43,7 @@ void* watek_raport_specjalistow(void* arg) {
     return NULL;
 }
 
-// ... (watek_statystyki BEZ ZMIAN)
+
 void* watek_statystyki(void* arg) {
     StatystykaPacjenta msg;
     while (monitor_running) {
@@ -73,7 +73,7 @@ void* watek_statystyki(void* arg) {
     return NULL;
 }
 
-// --- WĄTEK BRAMKI (TYLKO WYKONAWCA) ---
+
 void* watek_bramka(void* arg)
 {
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
@@ -81,16 +81,16 @@ void* watek_bramka(void* arg)
     
     int local_okienko_otwarte = 0;
     
-    // Czyścimy raport na start
+    
     FILE *f = fopen(RAPORT_1, "w"); if(f) fclose(f);
 
     while (monitor_running) {
-        usleep(5000); // 50ms (szybka reakcja)
+        usleep(5000); 
 
-        // Odczyt flagi ustawionej przez pacjenta (ATOMOWY)
+        
         int rozkaz = stan->wymuszenie_otwarcia;
         
-        // Synchronizacja stanu dla innych
+        
         if (stan->czy_okienko_2_otwarte != local_okienko_otwarte) {
              stan->czy_okienko_2_otwarte = local_okienko_otwarte;
         }
@@ -133,8 +133,8 @@ void* watek_bramka(void* arg)
     return NULL;
 }
 
-// ... (reszta pliku main.c: czyszczenie, signal_handler, uruchom_proces, main - BEZ ZMIAN)
-// Skopiuj resztę pliku main.c z poprzedniej odpowiedzi
+
+
 void czyszczenie() {     
     if (shmid != -1) shmctl(shmid, IPC_RMID, NULL);
     if (semid != -1) semctl(semid, 0, IPC_RMID);
