@@ -29,7 +29,6 @@ void praca_poz(int msgid_poz)
             break;
         } 
         
-        // Logika medyczna
         int r = rand() % 100;
         if (r < 10) pacjent.kolor = CZERWONY;
         else if (r < 45) pacjent.kolor = ZOLTY;
@@ -48,8 +47,9 @@ void praca_poz(int msgid_poz)
         pacjent.mtype = pacjent.pacjent_pid;
         if(koniec_pracy) break;
         
-        // POZ nie pisze do Raportu 1 ani 2
-        // zapisz_raport(KONSOLA, semid, "[POZ] Pacjent %d -> %s\n", pacjent.pacjent_pid, int_to_lekarz(pacjent.typ_lekarza));
+        // LOGOWANIE POZ NA KONSOLĘ
+        zapisz_raport(KONSOLA, semid, "[POZ] Pacjent %d -> %s (Kolor: %d)\n", 
+                     pacjent.pacjent_pid, int_to_lekarz(pacjent.typ_lekarza), pacjent.kolor);
 
         msgsnd(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0);
     }
@@ -68,7 +68,7 @@ void praca_specjalista(int typ, int msgid)
     {
         if(wezwanie_na_oddzial) {
             while(semop(semid, &lock, 1) == -1) { if(errno!=EINTR) break; }
-            stan->dostepni_specjalisci[typ] = 0; // Aktualizacja stanu dla Raportu 2
+            stan->dostepni_specjalisci[typ] = 0;
             while(semop(semid, &unlock, 1) == -1) { if(errno!=EINTR) break; }
             
             zapisz_raport(KONSOLA, semid, "[%s] Wezwanie na oddzial\n", int_to_lekarz(typ));
@@ -79,7 +79,7 @@ void praca_specjalista(int typ, int msgid)
             }
 
             while(semop(semid, &lock, 1) == -1) { if(errno!=EINTR) break; }
-            stan->dostepni_specjalisci[typ] = 1; // Powrót
+            stan->dostepni_specjalisci[typ] = 1;
             while(semop(semid, &unlock, 1) == -1) { if(errno!=EINTR) break; }
             
             wezwanie_na_oddzial = 0;
@@ -95,7 +95,6 @@ void praca_specjalista(int typ, int msgid)
         else if (r < 995) pacjent.skierowanie = 2;
         else pacjent.skierowanie = 3;
 
-        // Lekarz tylko bada, nie pisze raportów o dostępności (robi to main)
         zapisz_raport(KONSOLA, semid, "[%s] Badanie pacjenta %d\n", int_to_lekarz(typ), pacjent.pacjent_pid);
 
         pacjent.mtype = pacjent.pacjent_pid;

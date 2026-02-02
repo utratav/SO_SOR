@@ -18,24 +18,19 @@ void handle_ewakuacja(int sig) {
     ewakuacja_flaga = 1;
 }
 
-// === TO JEST NAJWAŻNIEJSZA ZMIANA ===
 void wykonaj_ewakuacje_i_wyjdz()
 {
-    // 1. BLOKADA SYGNAŁÓW (CRITICAL SECTION)
-    // Jak już zaczęliśmy uciekać, nic nie może nas zatrzymać (ani zabić)
-    signal(SIGINT, SIG_IGN); // Ignoruj kolejne SIGINT
+    signal(SIGINT, SIG_IGN); 
     sigset_t mask;
-    sigfillset(&mask);       // Zablokuj wszystkie inne sygnały
+    sigfillset(&mask);       
     sigprocmask(SIG_BLOCK, &mask, NULL);
 
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     
     if (stan != (void*)-1) {
-        // Blokujemy pamięć do zapisu
         struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
         struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
         
-        // Pętla retry dla semafora (chociaż sygnały są zablokowane, więc powinno przejść od razu)
         while(semop(semid, &lock, 1) == -1) {
             if(errno == EINTR) continue; 
             break;
@@ -64,7 +59,6 @@ void wykonaj_ewakuacje_i_wyjdz()
         semop(semid, &ewak, 1);
     }
 
-    // Wyjście z kodem
     _exit(sem_op_miejsca);
 }
 
@@ -112,11 +106,22 @@ int main(int argc, char *argv[])
     int wiek = rand() % 100;
     int vip = rand() % 100 < 20;
 
-    if (wiek < 18) {
+    if (wiek < 18) 
+    {
         potrzebny_rodzic = 1;
         sem_op_miejsca = 2;
         pthread_create(&rodzic_thread, NULL, watek_rodzic, NULL);
         rodzic_utworzony = 1;
+        // LOGOWANIE Z TID OPIEKUNA
+        CHECK_EWAKUACJA();
+        zapisz_raport(KONSOLA, semid, "[Pacjent %d] Utworzono (Wiek: %d, VIP: %d, Opiekun TID: %lu)\n", 
+                     mpid, wiek, vip, (unsigned long)rodzic_thread);
+    } 
+    else 
+    {
+        CHECK_EWAKUACJA();
+        zapisz_raport(KONSOLA, semid, "[Pacjent %d] Utworzono (Wiek: %d, VIP: %d)\n", 
+                     mpid, wiek, vip);
     }
 
     CHECK_EWAKUACJA();

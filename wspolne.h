@@ -16,6 +16,7 @@
 #include <stdarg.h> 
 #include <pthread.h>
 #include <sys/wait.h>
+#include <fcntl.h> // Potrzebne do open/O_APPEND
 
 #define FILE_KEY "."
 
@@ -30,17 +31,17 @@
 #define ID_KOL_CHIRURG 'C'
 #define ID_KOL_OKULISTA 'O'
 #define ID_KOL_PEDIATRA 'D'
-// ===================================================
 
 #define ID_SHM_MEM 'S'
 #define ID_SEM_SET 'M'
 #define ID_SEM_LIMITS 'X'
 
-#define PACJENCI_NA_DOBE 5000
-#define MAX_PACJENTOW 100
-#define MAX_PROCESOW 120
+#define PACJENCI_NA_DOBE 50000
+#define MAX_PACJENTOW 8000
+#define MAX_PROCESOW 10000
 #define INT_LIMIT_KOLEJEK 500
 
+// Pliki raportów
 #define RAPORT_1 "raport1.txt"
 #define RAPORT_2 "raport2.txt"
 #define RAPORT_3 "raport3.txt"
@@ -83,8 +84,6 @@ typedef struct
     int dostepni_specjalisci[7];
     int dlugosc_kolejki_rejestracji;
     int czy_okienko_2_otwarte;
-    
-    // Pola do ewakuacji
     int ewakuowani_z_poczekalni;
     int ewakuowani_sprzed_sor;
 } StanSOR;
@@ -123,27 +122,34 @@ union semun {
     unsigned short *array;
 };
 
+// === NOWA, SZYBKA FUNKCJA LOGOWANIA (BEZ SEMAFORA) ===
 static inline void zapisz_raport(const char* filename, int semid, const char* format, ...) {
+    (void)semid; // Ignorujemy semid - nie jest juz potrzebny, ale zostawiamy argument dla kompatybilnosci
+    
+    char bufor[1024]; // Lokalny bufor na sformatowaną linię
     va_list args;
-    if (filename == KONSOLA) {
-        struct sembuf lock = {SEM_ZAPIS_PLIK, -1, SEM_UNDO};
-        struct sembuf unlock = {SEM_ZAPIS_PLIK, 1, SEM_UNDO};
-        while (semop(semid, &lock, 1) == -1) { if (errno != EINTR) return; }
-        
-        va_start(args, format);
-        vprintf(format, args); 
-        va_end(args);
-        fflush(stdout); 
 
-        while (semop(semid, &unlock, 1) == -1) { if (errno != EINTR) break; }
+    // 1. Szybkie formatowanie w pamięci RAM
+    va_start(args, format);
+    int len = vsnprintf(bufor, sizeof(bufor), format, args);
+    va_end(args);
+
+    if (len <= 0) return;
+
+    // 2. Atomowy zapis
+    if (filename == KONSOLA) {
+        // Zapis na standardowe wyjście (deskryptor 1)
+        // write jest bezpieczniejszy niż printf przy wielu wątkach
+        write(STDOUT_FILENO, bufor, len);
     }
     else {
-        FILE *f = fopen(filename, "a");
-        if (f) {
-            va_start(args, format);
-            vfprintf(f, format, args); 
-            va_end(args);
-            fclose(f);
+        // O_APPEND gwarantuje atomowość zapisu na koniec pliku w Linuxie
+        // O_CREAT | O_WRONLY | O_APPEND
+        // Uprawnienia 0666 (rw-rw-rw-)
+        int fd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0666);
+        if (fd != -1) {
+            write(fd, bufor, len); // Jeden syscall zamiast fopen/fprintf/fclose
+            close(fd);
         }
     }
 }
@@ -156,48 +162,39 @@ static inline void podsumowanie(StatystykiLokalne *stat, StanSOR *stan)
     int ewak_z_poczekalni = stan->ewakuowani_z_poczekalni;
     int ewak_sprzed_sor = stan->ewakuowani_sprzed_sor;
 
-    printf("\n==============================================\n");
-    printf("         RAPORT KONCOWY (PODSUMOWANIE)        \n");
-    printf("==============================================\n");
+    char bufor[4096]; // Duży bufor na cały raport końcowy
+    int pos = 0;
 
-    printf("Obsluzeni pacjenci ogolem: %d\n\n", stat->obs_pacjenci);
-
-    printf("Pacjenci VIP:    %d (oczekiwano ok.: %d)\n", 
-           stat->ile_vip, (int)(0.2 * p + 0.5));
-           
-    printf("Pacjenci zwykli: %d (oczekiwano ok.: %d)\n\n", 
-           stat->obs_pacjenci - stat->ile_vip, (int)(0.8 * p + 0.5));
-
-    printf("Pacjenci odeslani do domu przez POZ: %d (oczekiwano ok.: %d)\n",
-             stat->obs_dom_poz, (int)(0.05 * p + 0.5));
-
-    printf("\n--- TRIAZ (KOLORY) ---\n");
-    printf("Czerwony: %d (oczekiwano ok.: %d)\n", 
-           stat->obs_kolory[CZERWONY], (int)(0.1 * p + 0.5));
-    printf("Zolty:    %d (oczekiwano ok.: %d)\n", 
-           stat->obs_kolory[ZOLTY], (int)(0.35 * p + 0.5));
-    printf("Zielony:  %d (oczekiwano ok.: %d)\n", 
-           stat->obs_kolory[ZIELONY], (int)(0.5 * p + 0.5));
-
-    printf("\n--- SPECJALISCI ---\n");
+    // Budujemy cały raport w pamięci, żeby wypisać go "na raz"
+    pos += sprintf(bufor + pos, "\n==============================================\n");
+    pos += sprintf(bufor + pos, "         RAPORT KONCOWY (PODSUMOWANIE)        \n");
+    pos += sprintf(bufor + pos, "==============================================\n");
+    pos += sprintf(bufor + pos, "Obsluzeni pacjenci ogolem: %d\n\n", stat->obs_pacjenci);
+    pos += sprintf(bufor + pos, "Pacjenci VIP:    %d (oczekiwano ok.: %d)\n", stat->ile_vip, (int)(0.2 * p + 0.5));
+    pos += sprintf(bufor + pos, "Pacjenci zwykli: %d (oczekiwano ok.: %d)\n\n", stat->obs_pacjenci - stat->ile_vip, (int)(0.8 * p + 0.5));
+    pos += sprintf(bufor + pos, "Pacjenci odeslani do domu przez POZ: %d (oczekiwano ok.: %d)\n", stat->obs_dom_poz, (int)(0.05 * p + 0.5));
+    
+    pos += sprintf(bufor + pos, "\n--- TRIAZ (KOLORY) ---\n");
+    pos += sprintf(bufor + pos, "Czerwony: %d (oczekiwano ok.: %d)\n", stat->obs_kolory[CZERWONY], (int)(0.1 * p + 0.5));
+    pos += sprintf(bufor + pos, "Zolty:    %d (oczekiwano ok.: %d)\n", stat->obs_kolory[ZOLTY], (int)(0.35 * p + 0.5));
+    pos += sprintf(bufor + pos, "Zielony:  %d (oczekiwano ok.: %d)\n", stat->obs_kolory[ZIELONY], (int)(0.5 * p + 0.5));
+    
+    pos += sprintf(bufor + pos, "\n--- SPECJALISCI ---\n");
     const char* nazwy_spec[] = {"", "Kardiolog", "Neurolog", "Laryngolog", "Chirurg", "Okulista", "Pediatra"};
-    for(int i = 1; i <= 6; i++) {
-        printf("%-12s: %d pacjentow\n", nazwy_spec[i], stat->obs_spec[i]);
-    }
+    for(int i = 1; i <= 6; i++) pos += sprintf(bufor + pos, "%-12s: %d pacjentow\n", nazwy_spec[i], stat->obs_spec[i]);
+    
+    pos += sprintf(bufor + pos, "\n--- DECYZJE KONCOWE ---\n");
+    pos += sprintf(bufor + pos, "Odeslani do domu:      %d (oczekiwano ok.: %d)\n", stat->decyzja[1], (int)(0.85 * p + 0.5));
+    pos += sprintf(bufor + pos, "Skierowani na oddzial: %d (oczekiwano ok.: %d)\n", stat->decyzja[2], (int)(0.145 * p + 0.5));
+    pos += sprintf(bufor + pos, "Do innej placowki:     %d (oczekiwano ok.: %d)\n", stat->decyzja[3], (int)(0.005 * p + 0.5));
+    
+    pos += sprintf(bufor + pos, "\n--- RAPORT EWAKUACJI (TEST SYNCHRONIZACJI) ---\n");
+    pos += sprintf(bufor + pos, "Ewakuowani z poczekalni (W_SRODKU): %d\n", ewak_z_poczekalni);
+    pos += sprintf(bufor + pos, "Ewakuowani sprzed SOR (W_KOLEJCE):  %d\n", ewak_sprzed_sor);
+    pos += sprintf(bufor + pos, "RAZEM (wg StanSOR):                 %d\n", ewak_z_poczekalni + ewak_sprzed_sor);
+    pos += sprintf(bufor + pos, "==============================================\n");
 
-    printf("\n--- DECYZJE KONCOWE ---\n");
-    printf("Odeslani do domu:      %d (oczekiwano ok.: %d)\n", 
-           stat->decyzja[1], (int)(0.85 * p + 0.5));
-    printf("Skierowani na oddzial: %d (oczekiwano ok.: %d)\n", 
-           stat->decyzja[2], (int)(0.145 * p + 0.5));
-    printf("Do innej placowki:     %d (oczekiwano ok.: %d)\n", 
-           stat->decyzja[3], (int)(0.005 * p + 0.5));
-
-    printf("\n--- RAPORT EWAKUACJI (TEST SYNCHRONIZACJI) ---\n");
-    printf("Ewakuowani z poczekalni (W_SRODKU): %d\n", ewak_z_poczekalni);
-    printf("Ewakuowani sprzed SOR (W_KOLEJCE):  %d\n", ewak_sprzed_sor);
-    printf("RAZEM (wg StanSOR):                 %d\n", ewak_z_poczekalni + ewak_sprzed_sor);
-    printf("==============================================\n");
+    // Jeden atomiczny write na koniec
+    write(STDOUT_FILENO, bufor, pos);
 }
-
 #endif

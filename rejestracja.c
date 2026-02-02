@@ -40,8 +40,8 @@ int main(int argc, char*argv[])
         if(msgsnd(msgid_we, &pacjent, sizeof(pacjent) - sizeof(long), 0) != -1)
         {
             if(!koniec_pracy) {
-                // Rejestracja obsługuje, ale nie pisze do Raportu 1
-                // zapisz_raport(KONSOLA, semid, "[Rejestracja %d] Przyjeto pacjenta %d\n", nr_okienka, pacjent.pacjent_pid);
+                // LOGOWANIE NA KONSOLĘ
+                zapisz_raport(KONSOLA, semid, "[Rejestracja %d] Przekazano pacjenta %d do POZ\n", nr_okienka, pacjent.pacjent_pid);
             }
         }        
     }
