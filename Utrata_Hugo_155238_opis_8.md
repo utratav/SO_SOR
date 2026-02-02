@@ -1288,3 +1288,81 @@ Flaga -f SOR_S_ pozwala na uchwycenie wszystkich procesów potomnych, których n
   Przyznanie wieku mogłoby się odbywać z poziomu fork() i exec() w generatorze - przekazywalibyśmy wiek jako argument (przy odpowiedniej konwersji na stringa) oraz przypisywali atoi(argv[1]) do wieku. Jednak co z pacjentami, którzy nie uaktualnili StanSOR - przed_poczekalnia++.
   Użycie semctl z GETNCNT również nie rozwiąże problemu, gdyż ten traktuje rodzica z dzieckiem jako pojedynczy proces. To samo się tyczy logiki semctl i GETVAL na semaforze generatora w połączeniu z GETVAL semafora poczekalni - znowu różnica zwróci nam jedynie liczbę procesów
   (bez rozróżnienia na dorosły / dziecko z opiekunem)
+
+
+
+  ## Kompilacja i uruchomienie
+
+### Wymagania
+
+* **Kompilator:** gcc
+* **System operacyjny:** Linux 
+* **Biblioteki:** pthread, standardowe biblioteki systemowe IPC
+
+### Kompilacja
+
+Projekt wykorzystuje `Makefile` do kompilacji. Wszystkie pliki źródłowe są kompilowane z flagami `-Wall` (wszystkie ostrzeżenia) oraz `-pthread` (dla wątków).
+
+```bash
+# Kompilacja wszystkich programów
+make all
+
+# Lub po prostu:
+make
+```
+
+Makefile tworzy następujące pliki wykonywalne:
+* `main` – główny proces zarządzający symulacją
+* `pacjent` – program procesu pacjenta
+* `lekarz` – program procesu lekarza (POZ i specjaliści)
+* `rejestracja` – program procesu rejestracji
+* `generator` – generator procesów pacjentów
+
+### Uruchomienie
+
+#### Tryb podstawowy (bez automatycznego dyrektora)
+
+```bash
+./main
+```
+
+W tym trybie symulacja działa bez automatycznych wezwań lekarzy na oddział. Wezwania można wysyłać ręcznie z konsoli za pomocą polecenia `kill`:
+
+```bash
+# Wysłanie sygnału SIGUSR2 do konkretnego lekarza (wymaga znajomości PID)
+kill -SIGUSR2 
+```
+
+#### Tryb automatyczny (z procesem dyrektora)
+
+```bash
+./main auto
+```
+
+W tym trybie uruchamiany jest dodatkowy proces dyrektora, który losowo wybiera specjalistów i wysyła im sygnały wezwania na oddział (`SIGUSR2`). Interwał między wezwaniami wynosi 2-6 sekund.
+
+### Zatrzymanie symulacji
+
+#### Normalne zakończenie
+
+Symulacja kończy się automatycznie po wygenerowaniu i obsłużeniu wszystkich pacjentów (`PACJENCI_NA_DOBE`).
+
+#### Ewakuacja (przerwanie)
+
+```bash
+# Naciśnij Ctrl+C w terminalu z uruchomionym ./main
+# lub wyślij sygnał SIGINT:
+kill -SIGINT 
+```
+
+Wywołuje to procedurę ewakuacji – wszystkie procesy są bezpiecznie zamykane, a na końcu wyświetlany jest raport z danymi o ewakuowanych pacjentach.
+
+### Czyszczenie
+
+```bash
+# Usunięcie plików wykonywalnych i raportów
+make clean
+
+# Usunięcie zasobów IPC (w przypadku niespodziewanego zakończenia)
+make ipc_clean
+```
