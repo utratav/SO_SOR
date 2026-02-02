@@ -6,7 +6,7 @@ int semid = -1;
 volatile sig_atomic_t koniec_pracy = 0;
 
 void handle_sig(int sig) {
-    if (sig == SIGINT) koniec_pracy = 1;
+    if (sig == SIGINT || sig == SIGTERM) koniec_pracy = 1;
 }
 
 int main(int argc, char*argv[]) 
@@ -16,6 +16,8 @@ int main(int argc, char*argv[])
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, NULL);
+
+    signal(SIGTERM, handle_sig);
     
     if (argc < 2) exit(1);
     nr_okienka = atoi(argv[1]);

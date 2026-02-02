@@ -10,7 +10,7 @@ volatile sig_atomic_t koniec_pracy = 0;
 void handle_sig(int sig)
 {
     if(sig == SIG_LEKARZ_ODDZIAL) wezwanie_na_oddzial = 1;
-    else if(sig == SIGINT) koniec_pracy = 1;
+    else if(sig == SIGINT || sig == SIGTERM) koniec_pracy = 1;
 }
 
 const char* int_to_lekarz(int typ) {
@@ -111,6 +111,8 @@ int main(int argc, char*argv[])
     sa.sa_flags = 0;
     sigaction(SIG_LEKARZ_ODDZIAL, &sa, NULL);
     sigaction(SIGINT, &sa, NULL); 
+
+    signal(SIGTERM, handle_sig);
     
     if (argc < 2) exit(1);
     typ_lekarza = atoi(argv[1]);

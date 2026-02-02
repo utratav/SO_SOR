@@ -2,6 +2,7 @@
 #include "wspolne.h"
 
 int semid = -1;
+int shmid = -1;
 volatile sig_atomic_t ewakuacja = 0;
 volatile sig_atomic_t sigchld_received = 0;
 
@@ -21,23 +22,45 @@ void zbierz_zombie() {
 }
 
 void procedura_ewakuacji() {
-    // BLOKADA: Generator staje się nieczuły na kolejne Ctrl+C
-    signal(SIGINT, SIG_IGN); 
+    signal(SIGINT, SIG_IGN); // Ignoruj kolejne SIGINT
+    signal(SIGTERM, SIG_IGN); // Ignoruj SIGTERM który sam zaraz wyśle do grupy
 
-    printf("\n[GENERATOR] Rozpoczynam ewakuacje pacjentow (wysylam SIGINT)...\n");
-    
-    kill(0, SIGINT); // Wyślij do grupy
-    
+    printf("\n[GENERATOR] Robie SNAPSHOT pamieci dzielonej...\n");
+
+    // === SNAPSHOT (Bez zapisywania przez 10000 dzieci) ===
+    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
+    if (stan != (void*)-1) {
+        // 1. Ilu jest przed wejściem? (Czekają na semaforze miejsc)
+        // GETNCNT zwraca liczbę procesów czekających na podniesienie semafora
+        int waiting_procs = semctl(semid, SEM_MIEJSCA_SOR, GETNCNT);
+        stan->ewakuowani_sprzed_sor = waiting_procs;
+
+        // 2. Ilu jest w środku? (Zajęte miejsca w semaforze)
+        // GETVAL zwraca aktualną wartość (ile miejsc wolnych).
+        // Max - Wolne = Zajęte (Suma wag).
+        int free_spots = semctl(semid, SEM_MIEJSCA_SOR, GETVAL);
+        int occupied = MAX_PACJENTOW - free_spots;
+        
+        // Korekta na kolejkę rejestracji (żeby raport był spójny)
+        // occupied to suma wszystkich w środku.
+        stan->ewakuowani_z_poczekalni = occupied;
+
+        shmdt(stan);
+        printf("[GENERATOR] Snapshot: W srodku (waga)=%d, W kolejce (proc)=%d\n", occupied, waiting_procs);
+    }
+
+    printf("[GENERATOR] Zabijam pacjentow (SIGTERM)...\n");
+    kill(0, SIGTERM); // Zabij całą grupę (Main ignoruje, Pacjenci obsługują)
+
+    int suma_exit_code = 0;
     int status;
     pid_t pid;
-    int suma_exit_code = 0;
     
-    // Czekamy na KAŻDEGO
+    // Zbieranie wszystkich
     while ((pid = waitpid(-1, &status, 0)) > 0) {
         if (WIFEXITED(status)) {
             suma_exit_code += WEXITSTATUS(status);
         }
-        // Brak break na ECHILD - upewniamy się pętlą while, że waitpid zwróci -1
     }
     
     printf("\n[GENERATOR] Ewakuacja zakonczona.\n");
@@ -54,10 +77,11 @@ int main(int argc, char* argv[])
 
     sa.sa_handler = handle_ewakuacja;
     sa.sa_flags = 0;
-    sigaction(SIGINT, &sa, NULL); 
+    sigaction(SIGINT, &sa, NULL); // Odbiera SIGINT od Main
     
     semid = semget(ftok(FILE_KEY, ID_SEM_SET), 0, 0);
-    if (semid == -1) exit(1);
+    shmid = shmget(ftok(FILE_KEY, ID_SHM_MEM), 0, 0);
+    if (semid == -1 || shmid == -1) exit(1);
 
     srand(time(NULL) ^ getpid());
     zapisz_raport(KONSOLA, semid, "\n[GENERATOR] Start.\n");
