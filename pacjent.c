@@ -12,49 +12,51 @@ int potrzebny_rodzic = 0;
 pthread_t rodzic_thread;
 volatile int rodzic_utworzony = 0;
 
-// Funkcja pomocnicza do aktualizacji liczników w SHM
-// Wywoływana w normalnym trybie pracy (nie w handlerze)
+
+
 void aktualizuj_liczniki(int zmiana_przed, int zmiana_wew, int zmiana_kolejki_rej) {
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     if (stan != (void*)-1) {
         struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
         struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
         
-        // Czekamy na dostęp do pamięci
         while(semop(semid, &lock, 1) == -1) { 
-            if (errno == EINTR) continue; // Retry na sygnałach
+            if (errno == EINTR) continue; 
             return;
         }
         
-        // Sekcja krytyczna
         stan->pacjenci_przed_sor += zmiana_przed;
         stan->pacjenci_w_poczekalni += zmiana_wew;
         stan->dlugosc_kolejki_rejestracji += zmiana_kolejki_rej;
+        
+        int obecna_kolejka = stan->dlugosc_kolejki_rejestracji;
+        int obecny_rozkaz = stan->wymuszenie_otwarcia;
+
+
+        if (obecna_kolejka >= PROG_OTWARCIA && obecny_rozkaz == 0) 
+        {
+            stan->wymuszenie_otwarcia = 1;
+            zapisz_raport(RAPORT_1, semid, "[PACJENT] Zlecam OTWARCIE (Kolejka: %d >= %d)\n", obecna_kolejka, PROG_OTWARCIA);
+        }
+        else if (obecna_kolejka < PROG_ZAMKNIECIA && obecny_rozkaz == 1) 
+        {
+            stan->wymuszenie_otwarcia = 0;
+            zapisz_raport(RAPORT_1, semid, "[PACJENT] Zlecam ZAMKNIECIE (Kolejka: %d < %d)\n", obecna_kolejka, PROG_ZAMKNIECIA);
+        }
         
         semop(semid, &unlock, 1);
         shmdt(stan);
     }
 }
 
-// Handler SIGTERM - wywoływany przez Generator podczas ewakuacji
 void handle_kill(int sig) {
-    // 1. Sprzątanie wątku opiekuna (jeśli jest)
     if (potrzebny_rodzic && rodzic_utworzony) {
         pthread_cancel(rodzic_thread);
         pthread_join(rodzic_thread, NULL);
     }
-    
-    // 2. Odłączenie pamięci (ważne, żeby nie wyciekała)
-    // (W nowoczesnych OS exit to robi, ale dla porządku...)
-    // shmdt... nie mamy wskaźnika globalnego, ale to ok.
-
-    // 3. Exit code w zależności od stanu
-    // SEM_UNDO automatycznie zwolni miejsce w poczekalni, jeśli je zajęliśmy.
     if (stan_pacjenta == STAN_W_POCZEKALNI) {
-        _exit(sem_op_miejsca); // Zwracamy wagę (1 lub 2)
+        _exit(sem_op_miejsca);
     }
-    
-    // Jeśli byłem przed SOR (STAN_PRZED_SOR) -> zwracam 0
     _exit(0);
 }
 
@@ -99,29 +101,21 @@ int main(int argc, char *argv[])
         pthread_create(&rodzic_thread, NULL, watek_rodzic, NULL);
         rodzic_utworzony = 1;
         zapisz_raport(KONSOLA, semid, "[Pacjent %d] Utworzono (Wiek: %d, VIP: %d, Opiekun TID: %lu)\n", mpid, wiek, vip, (unsigned long)rodzic_thread);
-    } else {
+    } 
+    else 
+    {
         zapisz_raport(KONSOLA, semid, "[Pacjent %d] Utworzono (Wiek: %d, VIP: %d)\n", mpid, wiek, vip);
     }
 
-    // === KROK 1: Urodzenie się ===
-    // Jestem przed SOR, więc zwiększam licznik w SHM
+ 
     aktualizuj_liczniki(sem_op_miejsca, 0, 0);
 
-    // === KROK 2: Próba wejścia ===
     struct sembuf wejscie = {SEM_MIEJSCA_SOR, -sem_op_miejsca, SEM_UNDO};
-    while (semop(semid, &wejscie, 1) == -1) { 
-        if (errno == EINTR) continue; 
-        exit(1); 
-    }
+    while (semop(semid, &wejscie, 1) == -1) { if (errno == EINTR) continue; exit(1); }
     
-    // === KROK 3: Wejście fizyczne (Aktualizacja stanu) ===
-    // Przeszedłem przez bramkę, więc odejmuję się z "Przed", dodaję do "Wewnatrz"
-    // Dodatkowo zwiększam kolejkę do rejestracji
+    
     aktualizuj_liczniki(-sem_op_miejsca, sem_op_miejsca, 1);
     
-    // Dopiero po aktualizacji w SHM zmieniam flagę lokalną
-    // Dzięki temu, jeśli SIGTERM przyjdzie przed aktualizacją SHM, exit code będzie 0,
-    // a w SHM będę figurował jako "przed SOR". Wszystko się zgodzi.
     stan_pacjenta = STAN_W_POCZEKALNI;
 
     KomunikatPacjenta msg;
@@ -131,23 +125,19 @@ int main(int argc, char *argv[])
     msg.pacjent_pid = mpid;
     msg.czy_vip = vip;
 
-    // === KROK 4: Rejestracja ===
     lock_limit(SLIMIT_REJESTRACJA);
     while (msgsnd(rej_msgid, &msg, sizeof(msg)-sizeof(long), 0) == -1) { if (errno == EINTR) continue; unlock_limit(SLIMIT_REJESTRACJA); exit(1); }
     while (msgrcv(rej_msgid, &msg, sizeof(msg)-sizeof(long), mpid, 0) == -1) { if (errno == EINTR) continue; unlock_limit(SLIMIT_REJESTRACJA); exit(1); }
     unlock_limit(SLIMIT_REJESTRACJA);
 
-    // Po rejestracji: Zmniejsz kolejkę rejestracji
     aktualizuj_liczniki(0, 0, -1);
 
-    // === KROK 5: POZ ===
     msg.mtype = 1; 
     lock_limit(SLIMIT_POZ);
     while (msgsnd(poz_id, &msg, sizeof(msg)-sizeof(long), 0) == -1) { if (errno == EINTR) continue; }
     while (msgrcv(poz_id, &msg, sizeof(msg)-sizeof(long), mpid, 0) == -1) { if (errno == EINTR) continue; }
     unlock_limit(SLIMIT_POZ);
 
-    // === KROK 6: Specjalista ===
     if (msg.typ_lekarza > 0) {
         int spec_id = msg.typ_lekarza;
         int qid = msgget(ftok(FILE_KEY, (spec_id==1?'K':spec_id==2?'N':spec_id==3?'L':spec_id==4?'C':spec_id==5?'O':'D')), 0);
@@ -158,7 +148,6 @@ int main(int argc, char *argv[])
         unlock_limit(spec_id + 1);
     }
 
-    // === KROK 7: Koniec wizyty ===
     StatystykaPacjenta stat;
     stat.mtype = 1;
     stat.czy_vip = vip;
@@ -167,10 +156,7 @@ int main(int argc, char *argv[])
     stat.skierowanie = msg.skierowanie;
     msgsnd(msgid_stat, &stat, sizeof(stat)-sizeof(long), 0);
 
-    // Wychodzę z SOR
     stan_pacjenta = STAN_WYCHODZI; 
-    
-    // Zdejmuję się z licznika "Wewnatrz"
     aktualizuj_liczniki(0, -sem_op_miejsca, 0);
 
     if (potrzebny_rodzic && rodzic_utworzony) {
@@ -178,7 +164,6 @@ int main(int argc, char *argv[])
         pthread_join(rodzic_thread, NULL);
     }
     
-    // Zwalniam semafor (fizyczne wyjście)
     struct sembuf wyjscie = {SEM_MIEJSCA_SOR, sem_op_miejsca, SEM_UNDO};
     semop(semid, &wyjscie, 1);
     

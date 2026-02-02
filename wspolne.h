@@ -20,7 +20,6 @@
 
 #define FILE_KEY "."
 
-// ID Kolejek
 #define ID_KOLEJKA_REJESTRACJA 'R'
 #define ID_KOLEJKA_POZ 'P'
 #define ID_KOLEJKA_STATYSTYKI 'T'
@@ -41,9 +40,8 @@
 #define MAX_PROCESOW 1000
 #define INT_LIMIT_KOLEJEK 500
 
-#define RAPORT_1 "raport1.txt"
-#define RAPORT_2 "raport2.txt"
-#define RAPORT_3 "raport3.txt"
+#define RAPORT_1 "monitor_bramek.txt"
+#define RAPORT_2 "spec_na_oddziale.txt"
 #define KONSOLA NULL
 
 #define SEM_DOSTEP_PAMIEC 0
@@ -77,6 +75,9 @@
 #define STAN_W_POCZEKALNI 1
 #define STAN_WYCHODZI 2
 
+#define PROG_OTWARCIA (MAX_PACJENTOW / 2)  
+#define PROG_ZAMKNIECIA (MAX_PACJENTOW / 3) 
+
 typedef struct 
 {
     int symulacja_trwa;
@@ -84,13 +85,14 @@ typedef struct
     int dlugosc_kolejki_rejestracji;
     int czy_okienko_2_otwarte;
     
-    // NOWE LICZNIKI STANU (Zamiast transakcyjnych)
-    int pacjenci_przed_sor;     // Ile osob stoi przed wejsciem (suma wag)
-    int pacjenci_w_poczekalni;  // Ile osob jest fizycznie w srodku (suma wag)
+    int pacjenci_przed_sor;    
+    int pacjenci_w_poczekalni;  
+
+    int wymuszenie_otwarcia;
     
-    // Snapshot dla raportu
     int snap_w_srodku;
     int snap_przed_sor;
+
 } StanSOR;
 
 typedef struct {
@@ -109,7 +111,7 @@ typedef struct {
     int kolor;
     int typ_lekarza;
     int skierowanie;
-} StatystykaPacjenta;
+} StatystykaPacjenta; //odswiezana lokalnie w main
 
 typedef struct 
 {
@@ -128,7 +130,7 @@ union semun {
 };
 
 static inline void zapisz_raport(const char* filename, int semid, const char* format, ...) {
-    (void)semid;
+    (void)semid; //semid to pozostalosc starej implementacji
     char bufor[1024]; 
     va_list args;
     va_start(args, format);
@@ -138,7 +140,7 @@ static inline void zapisz_raport(const char* filename, int semid, const char* fo
     if (filename == KONSOLA) {
         write(STDOUT_FILENO, bufor, len);
     } else {
-        int fd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0666);
+        int fd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0600);
         if (fd != -1) { write(fd, bufor, len); close(fd); }
     }
 }
@@ -148,7 +150,7 @@ static inline void podsumowanie(StatystykiLokalne *stat, StanSOR *stan)
     double p = (double)stat->obs_pacjenci; 
     if (p == 0) p = 1.0; 
     
-    // Pobieramy dane ze snapshota zrobionego przez generator
+    // pobieramy dane ze snapshota zrobionego przez generator ---> wait() -> kill(pacjenci) -> post()
     int ewak_z_poczekalni = stan->snap_w_srodku;
     int ewak_sprzed_sor = stan->snap_przed_sor;
 

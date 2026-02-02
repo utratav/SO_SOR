@@ -47,7 +47,6 @@ void praca_poz(int msgid_poz)
         pacjent.mtype = pacjent.pacjent_pid;
         if(koniec_pracy) break;
         
-        // LOGOWANIE POZ NA KONSOLĘ
         zapisz_raport(KONSOLA, semid, "[POZ] Pacjent %d -> %s (Kolor: %d)\n", 
                      pacjent.pacjent_pid, int_to_lekarz(pacjent.typ_lekarza), pacjent.kolor);
 

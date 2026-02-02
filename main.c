@@ -26,7 +26,7 @@ volatile sig_atomic_t ewakuacja_rozpoczeta = 0;
 StatystykiLokalne statystyki;
 pthread_mutex_t stat_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// --- WĄTKI RAPORTUJĄCE (BEZ ZMIAN) ---
+// ... (watek_raport_specjalistow BEZ ZMIAN)
 void* watek_raport_specjalistow(void* arg) {
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     if (stan == (void*)-1) return NULL;
@@ -43,6 +43,7 @@ void* watek_raport_specjalistow(void* arg) {
     return NULL;
 }
 
+// ... (watek_statystyki BEZ ZMIAN)
 void* watek_statystyki(void* arg) {
     StatystykaPacjenta msg;
     while (monitor_running) {
@@ -59,7 +60,6 @@ void* watek_statystyki(void* arg) {
         if (msg.skierowanie >= 1 && msg.skierowanie <= 3) statystyki.decyzja[msg.skierowanie]++;
         pthread_mutex_unlock(&stat_mutex);
     }
-    // Zbieranie resztek
     while (msgrcv(msgid_stat, &msg, sizeof(StatystykaPacjenta) - sizeof(long), 0, IPC_NOWAIT) != -1) {
         pthread_mutex_lock(&stat_mutex);
         statystyki.obs_pacjenci++;
@@ -73,39 +73,68 @@ void* watek_statystyki(void* arg) {
     return NULL;
 }
 
-void* watek_bramka(void* arg) {
+// --- WĄTEK BRAMKI (TYLKO WYKONAWCA) ---
+void* watek_bramka(void* arg)
+{
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     if (stan == (void*)-1) return NULL;
+    
     int local_okienko_otwarte = 0;
+    
+    // Czyścimy raport na start
     FILE *f = fopen(RAPORT_1, "w"); if(f) fclose(f);
+
     while (monitor_running) {
-        usleep(2000);
-        if (stan->dlugosc_kolejki_rejestracji > 8 && stan->czy_okienko_2_otwarte == 0) stan->czy_okienko_2_otwarte = 1;
-        else if (stan->dlugosc_kolejki_rejestracji < 3 && stan->czy_okienko_2_otwarte == 1) stan->czy_okienko_2_otwarte = 0;
+        usleep(5000); // 50ms (szybka reakcja)
+
+        // Odczyt flagi ustawionej przez pacjenta (ATOMOWY)
+        int rozkaz = stan->wymuszenie_otwarcia;
         
-        int shm_okienko_otwarte = stan->czy_okienko_2_otwarte;
-        if (!local_okienko_otwarte && shm_okienko_otwarte) {
+        // Synchronizacja stanu dla innych
+        if (stan->czy_okienko_2_otwarte != local_okienko_otwarte) {
+             stan->czy_okienko_2_otwarte = local_okienko_otwarte;
+        }
+
+        if (!local_okienko_otwarte && rozkaz == 1) {
             pid_t pid = fork();
-            if (pid == 0) { signal(SIGTERM, SIG_DFL); execl("./rejestracja", "rejestracja", "2", NULL); exit(1); } // WAŻNE: Przywróć SIGTERM dla dziecka
-            else if (pid > 0) {
-                pid_rejestracja_2 = pid; local_okienko_otwarte = 1;
-                zapisz_raport(RAPORT_1, semid, "Okienko 2 OTWIERA SIE (Kolejka: %d)\n", stan->dlugosc_kolejki_rejestracji);
-                zapisz_raport(KONSOLA, semid, "[MAIN] Otwieram okienko 2 (Kolejka: %d)\n", stan->dlugosc_kolejki_rejestracji);
+            if (pid == 0) {               
+                signal(SIGTERM, SIG_DFL);
+                execl("./rejestracja", "SOR_rejestracja", "2", NULL);
+                exit(1);
+            } else if (pid > 0) {
+                pid_rejestracja_2 = pid;
+                local_okienko_otwarte = 1;
+                stan->czy_okienko_2_otwarte = 1;
+                
+                // Potwierdzenie akcji w raporcie
+                zapisz_raport(RAPORT_1, semid, "[MONITOR] Otwieram bramke nr 2\n");
+                zapisz_raport(KONSOLA, semid, "[MAIN] Otwieram bramke nr 2\n");
             }
-        } else if (local_okienko_otwarte && !shm_okienko_otwarte) {
+        } 
+        else if (local_okienko_otwarte && rozkaz == 0) {
             if (pid_rejestracja_2 > 0) {
-                kill(pid_rejestracja_2, SIGINT); waitpid(pid_rejestracja_2, NULL, 0);
-                pid_rejestracja_2 = -1; local_okienko_otwarte = 0;
-                zapisz_raport(RAPORT_1, semid, "Okienko 2 ZAMYKA SIE (Kolejka: %d)\n", stan->dlugosc_kolejki_rejestracji);
-                zapisz_raport(KONSOLA, semid, "[MAIN] Zamykam okienko 2 (Kolejka: %d)\n", stan->dlugosc_kolejki_rejestracji);
+                kill(pid_rejestracja_2, SIGINT);
+                waitpid(pid_rejestracja_2, NULL, 0);
+                pid_rejestracja_2 = -1;
+                local_okienko_otwarte = 0;
+                stan->czy_okienko_2_otwarte = 0;
+                
+                // Potwierdzenie akcji w raporcie
+                zapisz_raport(RAPORT_1, semid, "[MONITOR] Zamykam bramke nr 2\n");
+                zapisz_raport(KONSOLA, semid, "[MAIN] Zamykam bramke nr 2\n");
             }
         }
     }
-    if (local_okienko_otwarte && pid_rejestracja_2 > 0) { kill(pid_rejestracja_2, SIGINT); waitpid(pid_rejestracja_2, NULL, 0); }
+    if (local_okienko_otwarte && pid_rejestracja_2 > 0) {
+        kill(pid_rejestracja_2, SIGTERM);
+        waitpid(pid_rejestracja_2, NULL, 0);
+    }
     shmdt(stan);
     return NULL;
 }
 
+// ... (reszta pliku main.c: czyszczenie, signal_handler, uruchom_proces, main - BEZ ZMIAN)
+// Skopiuj resztę pliku main.c z poprzedniej odpowiedzi
 void czyszczenie() {     
     if (shmid != -1) shmctl(shmid, IPC_RMID, NULL);
     if (semid != -1) semctl(semid, 0, IPC_RMID);
@@ -129,7 +158,7 @@ pid_t uruchom_proces(const char* prog, const char* name, const char* arg1) {
     pid_t pid = fork();
     if (pid == 0) {
         signal(SIGINT, SIG_DFL);
-        signal(SIGTERM, SIG_DFL); // Dzieci muszą mieć domyślny SIGTERM (żeby umrzeć)
+        signal(SIGTERM, SIG_DFL);
         if(arg1) execl(prog, name, arg1, NULL);
         else execl(prog, name, NULL);
         exit(1);
@@ -137,27 +166,17 @@ pid_t uruchom_proces(const char* prog, const char* name, const char* arg1) {
     return pid;
 }
 
-void przeprowadz_ewakuacje()
-{
+void przeprowadz_ewakuacje() {
     printf("\n=== ROZPOCZYNAM EWAKUACJE SOR ===\n");
-    
-    // 1. Najpierw zabij personel odbierający pacjentów (Rejestracja/Lekarze)
-    // Dzięki temu nikt nie wyjmie pacjenta z kolejki w trakcie snapshota
     if (pid_rejestracja_1 > 0) kill(pid_rejestracja_1, SIGTERM);
     if (pid_poz > 0) kill(pid_poz, SIGTERM);
     for(int i=1; i<=6; i++) if(pid_lekarze[i] > 0) kill(pid_lekarze[i], SIGTERM);
-
-    // 2. Daj chwilę na zamknięcie
     usleep(10000); 
-
-    // 3. Powiadom generator (zrobi snapshot i zabije pacjentów)
     if (pid_gen > 0) {
         kill(pid_gen, SIGINT);
         waitpid(pid_gen, NULL, 0);
     }
-    
     if (pid_dyrektor > 0) kill(pid_dyrektor, SIGKILL);
-    
     while(wait(NULL) > 0);
 }
 
@@ -168,11 +187,8 @@ int main(int argc, char *argv[]) {
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, NULL);
-    
-    // WAŻNE: Main ignoruje SIGTERM (wysyłany przez generator do grupy procesów)
     signal(SIGTERM, SIG_IGN);
 
-    // IPC setup ...
     key_t key_shm = ftok(FILE_KEY, ID_SHM_MEM); 
     key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
     key_t key_limits = ftok(FILE_KEY, ID_SEM_LIMITS);
@@ -217,13 +233,13 @@ int main(int argc, char *argv[]) {
     
     FILE *f = fopen(RAPORT_1, "w"); if(f) fclose(f);
     f = fopen(RAPORT_2, "w"); if(f) fclose(f);
-    f = fopen(RAPORT_3, "w"); if(f) fclose(f);
+    
 
     if (argc > 1 && strcmp(argv[1], "auto") == 0) {
         pid_dyrektor = fork();
         if (pid_dyrektor == 0) {
             signal(SIGINT, SIG_IGN);
-            signal(SIGTERM, SIG_IGN); // Dyrektor ignoruje TERM (zginie od Maina)
+            signal(SIGTERM, SIG_IGN); 
             StanSOR *stan_child = (StanSOR*)shmat(shmid, NULL, 0);
             srand(time(NULL) ^ getpid());
             while(stan_child->symulacja_trwa) {
@@ -241,7 +257,7 @@ int main(int argc, char *argv[]) {
     pthread_create(&bramka_tid, NULL, watek_bramka, NULL);
     pthread_create(&raport2_tid, NULL, watek_raport_specjalistow, NULL); 
 
-    pid_gen = uruchom_proces("./generator", "generator", NULL);
+    pid_gen = uruchom_proces("./generator", "SOR_generator", NULL);
 
     while (1) {
         if (ewakuacja_rozpoczeta) {
@@ -259,13 +275,10 @@ int main(int argc, char *argv[]) {
         printf("\n[MAIN] Koniec symulacji. Zamykanie...\n");
         stan = (StanSOR*)shmat(shmid, NULL, 0);
         if (stan != (void*)-1) { stan->symulacja_trwa = 0; shmdt(stan); }
-        
-        // Zamykamy personel najpierw
         if (pid_rejestracja_1 > 0) kill(pid_rejestracja_1, SIGTERM);
         if (pid_poz > 0) kill(pid_poz, SIGTERM);
         for(int i=1; i<=6; i++) if(pid_lekarze[i] > 0) kill(pid_lekarze[i], SIGTERM);
         if (pid_dyrektor > 0) kill(pid_dyrektor, SIGKILL);
-        
         while(wait(NULL) > 0);
     }
 

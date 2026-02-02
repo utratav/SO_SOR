@@ -42,8 +42,7 @@ int main(int argc, char*argv[])
         if(msgsnd(msgid_we, &pacjent, sizeof(pacjent) - sizeof(long), 0) != -1)
         {
             if(!koniec_pracy) {
-                // LOGOWANIE NA KONSOLĘ
-                zapisz_raport(KONSOLA, semid, "[Rejestracja %d] Przekazano pacjenta %d do POZ\n", nr_okienka, pacjent.pacjent_pid);
+                zapisz_raport(KONSOLA, semid, "[Rejestracja %d] Pacjent %d -> POZ\n", nr_okienka, pacjent.pacjent_pid);
             }
         }        
     }
