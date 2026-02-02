@@ -19,11 +19,38 @@ pid_t pid_dyrektor = -1;
 volatile int monitor_running = 1;
 pthread_t stat_tid;      
 pthread_t bramka_tid;   
+pthread_t raport2_tid; // Nowy wątek dla Raportu 2
 
 volatile sig_atomic_t ewakuacja_rozpoczeta = 0;
 
 StatystykiLokalne statystyki;
 pthread_mutex_t stat_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Wątek generujący RAPORT 2 (Dashboard Specjalistów)
+void* watek_raport_specjalistow(void* arg)
+{
+    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
+    if (stan == (void*)-1) return NULL;
+
+    const char* nazwy_spec[] = {"", "Kardiolog", "Neurolog", "Laryngolog", "Chirurg", "Okulista", "Pediatra"};
+
+    while(monitor_running) {
+        // Używamy "w" (overwrite), aby plik miał zawsze tylko 6 linii (aktualny stan)
+        FILE *f = fopen(RAPORT_2, "w");
+        if (f) {
+            // Pobieramy stan z pamięci dzielonej
+            // (Odczyt int jest atomowy na większości architektur, więc blokada semafora 
+            // dla samego odczytu w raporcie poglądowym nie jest krytyczna, a przyspiesza działanie)
+            for(int i=1; i<=6; i++) {
+                fprintf(f, "%-12s %d\n", nazwy_spec[i], stan->dostepni_specjalisci[i]);
+            }
+            fclose(f);
+        }
+        usleep(200000); // Odświeżanie co 200ms
+    }
+    shmdt(stan);
+    return NULL;
+}
 
 void* watek_statystyki(void* arg)
 {
@@ -56,12 +83,16 @@ void* watek_statystyki(void* arg)
     return NULL;
 }
 
+// Wątek generujący RAPORT 1 (Stan bramek)
 void* watek_bramka(void* arg)
 {
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     if (stan == (void*)-1) return NULL;
     int local_okienko_otwarte = 0;
     
+    // Czyścimy Raport 1 na starcie
+    FILE *f = fopen(RAPORT_1, "w"); if(f) fclose(f);
+
     while (monitor_running) {
         usleep(200000);
         int shm_okienko_otwarte = stan->czy_okienko_2_otwarte;
@@ -74,6 +105,9 @@ void* watek_bramka(void* arg)
             } else if (pid > 0) {
                 pid_rejestracja_2 = pid;
                 local_okienko_otwarte = 1;
+                
+                // RAPORT 1: Otwarcie
+                zapisz_raport(RAPORT_1, semid, "Okienko 2 otwiera sie (Kolejka: %d)\n", stan->dlugosc_kolejki_rejestracji);
                 zapisz_raport(KONSOLA, semid, "[MAIN] Otwieram okienko 2\n");
             }
         } else if (local_okienko_otwarte && !shm_okienko_otwarte) {
@@ -82,6 +116,9 @@ void* watek_bramka(void* arg)
                 waitpid(pid_rejestracja_2, NULL, 0);
                 pid_rejestracja_2 = -1;
                 local_okienko_otwarte = 0;
+                
+                // RAPORT 1: Zamknięcie
+                zapisz_raport(RAPORT_1, semid, "Okienko 2 zamyka sie (Kolejka: %d)\n", stan->dlugosc_kolejki_rejestracji);
                 zapisz_raport(KONSOLA, semid, "[MAIN] Zamykam okienko 2\n");
             }
         }
@@ -190,13 +227,16 @@ int main(int argc, char *argv[])
     printf("[MAIN] Start systemu SOR...\n");
     pid_rejestracja_1 = uruchom_proces("./rejestracja", "SOR_rejestracja", "1");
     pid_poz = uruchom_proces("./lekarz", "lekarz", "0"); 
-    const char* nazwy_lek[] = {"", "Kardiolog", "Neurolog", "Laryngolog", "Chirurg", "Okulista", "Pediatra"};
+    const char* nazwy_lek[] = {"", "SOR_S_Kardiolog", "SOR_S_Neurolog", "SOR_S_Laryngolog", "SOR_S_Chirurg", "SOR_S_Okulista", "SOR_S_Pediatra"};
     for(int i=1; i<=6; i++) {
         char buff[5];
         sprintf(buff, "%d", i); 
         pid_lekarze[i] = uruchom_proces("./lekarz", nazwy_lek[i], buff);
     }
-    FILE *f = fopen(RAPORT_2, "w"); if(f) fclose(f);
+    
+    // Czyścimy raporty na start
+    FILE *f = fopen(RAPORT_1, "w"); if(f) fclose(f);
+    f = fopen(RAPORT_2, "w"); if(f) fclose(f);
     f = fopen(RAPORT_3, "w"); if(f) fclose(f);
 
     if (argc > 1 && strcmp(argv[1], "auto") == 0) {
@@ -218,8 +258,9 @@ int main(int argc, char *argv[])
 
     pthread_create(&stat_tid, NULL, watek_statystyki, NULL);
     pthread_create(&bramka_tid, NULL, watek_bramka, NULL);
+    pthread_create(&raport2_tid, NULL, watek_raport_specjalistow, NULL); // START Dashboardu
 
-    pid_gen = uruchom_proces("./generator", "generator", NULL);
+    pid_gen = uruchom_proces("./generator", "SOR_generator", NULL);
 
     while (1) {
         if (ewakuacja_rozpoczeta) {
@@ -246,10 +287,11 @@ int main(int argc, char *argv[])
 
     pthread_join(stat_tid, NULL);
     pthread_join(bramka_tid, NULL);
+    pthread_join(raport2_tid, NULL);
     
     stan = (StanSOR*)shmat(shmid, NULL, 0);
     if (stan != (void*)-1) {
-        podsumowanie(&statystyki, stan); 
+        podsumowanie(&statystyki, stan);
         shmdt(stan);
     }
 

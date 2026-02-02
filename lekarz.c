@@ -26,7 +26,7 @@ void praca_poz(int msgid_poz)
     {
         if(msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0, IPC_NOWAIT) == -1) {
             if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; }
-            perror("poz msgrcv"); break;
+            break;
         } 
         
         // Logika medyczna
@@ -48,7 +48,9 @@ void praca_poz(int msgid_poz)
         pacjent.mtype = pacjent.pacjent_pid;
         if(koniec_pracy) break;
         
-        zapisz_raport(KONSOLA, semid, "[POZ] Pacjent %d -> %s\n", pacjent.pacjent_pid, int_to_lekarz(pacjent.typ_lekarza));
+        // POZ nie pisze do Raportu 1 ani 2
+        // zapisz_raport(KONSOLA, semid, "[POZ] Pacjent %d -> %s\n", pacjent.pacjent_pid, int_to_lekarz(pacjent.typ_lekarza));
+
         msgsnd(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0);
     }
 }
@@ -56,6 +58,8 @@ void praca_poz(int msgid_poz)
 void praca_specjalista(int typ, int msgid)
 {
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
+    if (stan == (void*)-1) exit(1);
+
     struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
     struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
     KomunikatPacjenta pacjent;
@@ -63,19 +67,21 @@ void praca_specjalista(int typ, int msgid)
     while(!koniec_pracy)
     {
         if(wezwanie_na_oddzial) {
-            semop(semid, &lock, 1);
-            stan->dostepni_specjalisci[typ] = 0;
-            semop(semid, &unlock, 1);
+            while(semop(semid, &lock, 1) == -1) { if(errno!=EINTR) break; }
+            stan->dostepni_specjalisci[typ] = 0; // Aktualizacja stanu dla Raportu 2
+            while(semop(semid, &unlock, 1) == -1) { if(errno!=EINTR) break; }
             
             zapisz_raport(KONSOLA, semid, "[%s] Wezwanie na oddzial\n", int_to_lekarz(typ));
-            for(int i=0; i<100; i++) { // Sleep w pętli żeby szybciej reagować na SIGINT
+            
+            for(int i=0; i<30; i++) {
                 if(koniec_pracy) break;
                 usleep(100000);
             }
 
-            semop(semid, &lock, 1);
-            stan->dostepni_specjalisci[typ] = 1;
-            semop(semid, &unlock, 1);
+            while(semop(semid, &lock, 1) == -1) { if(errno!=EINTR) break; }
+            stan->dostepni_specjalisci[typ] = 1; // Powrót
+            while(semop(semid, &unlock, 1) == -1) { if(errno!=EINTR) break; }
+            
             wezwanie_na_oddzial = 0;
         }
 
@@ -89,7 +95,8 @@ void praca_specjalista(int typ, int msgid)
         else if (r < 995) pacjent.skierowanie = 2;
         else pacjent.skierowanie = 3;
 
-        zapisz_raport(KONSOLA, semid, "[%s] Pacjent %d badany\n", int_to_lekarz(typ), pacjent.pacjent_pid);
+        // Lekarz tylko bada, nie pisze raportów o dostępności (robi to main)
+        zapisz_raport(KONSOLA, semid, "[%s] Badanie pacjenta %d\n", int_to_lekarz(typ), pacjent.pacjent_pid);
 
         pacjent.mtype = pacjent.pacjent_pid;
         msgsnd(msgid, &pacjent, sizeof(pacjent) - sizeof(long), 0);
@@ -104,7 +111,7 @@ int main(int argc, char*argv[])
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIG_LEKARZ_ODDZIAL, &sa, NULL);
-    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL); 
     
     if (argc < 2) exit(1);
     typ_lekarza = atoi(argv[1]);
@@ -121,7 +128,7 @@ int main(int argc, char*argv[])
         int mid = msgget(ftok(FILE_KEY, symbol), 0);
         praca_specjalista(typ_lekarza, mid);
     }
-
+    
     zapisz_raport(KONSOLA, semid, "[%s] Koniec pracy.\n", int_to_lekarz(typ_lekarza));
     return 0;
 }

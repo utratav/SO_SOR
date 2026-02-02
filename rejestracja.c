@@ -33,15 +33,16 @@ int main(int argc, char*argv[])
                 usleep(50000);
                 continue;
             }
-            perror("rejestracja msgrcv");
             break;
         }
 
         pacjent.mtype = pacjent.pacjent_pid; 
         if(msgsnd(msgid_we, &pacjent, sizeof(pacjent) - sizeof(long), 0) != -1)
         {
-            if(!koniec_pracy)
-                zapisz_raport(KONSOLA, semid, "[Rejestracja %d] Pacjent %d -> POZ\n", nr_okienka, pacjent.pacjent_pid);
+            if(!koniec_pracy) {
+                // Rejestracja obsługuje, ale nie pisze do Raportu 1
+                // zapisz_raport(KONSOLA, semid, "[Rejestracja %d] Przyjeto pacjenta %d\n", nr_okienka, pacjent.pacjent_pid);
+            }
         }        
     }
     return 0;

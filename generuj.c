@@ -21,6 +21,9 @@ void zbierz_zombie() {
 }
 
 void procedura_ewakuacji() {
+    // BLOKADA: Generator staje się nieczuły na kolejne Ctrl+C
+    signal(SIGINT, SIG_IGN); 
+
     printf("\n[GENERATOR] Rozpoczynam ewakuacje pacjentow (wysylam SIGINT)...\n");
     
     kill(0, SIGINT); // Wyślij do grupy
@@ -29,16 +32,16 @@ void procedura_ewakuacji() {
     pid_t pid;
     int suma_exit_code = 0;
     
+    // Czekamy na KAŻDEGO
     while ((pid = waitpid(-1, &status, 0)) > 0) {
         if (WIFEXITED(status)) {
             suma_exit_code += WEXITSTATUS(status);
         }
-        if (errno == ECHILD) break;
+        // Brak break na ECHILD - upewniamy się pętlą while, że waitpid zwróci -1
     }
     
     printf("\n[GENERATOR] Ewakuacja zakonczona.\n");
     printf("[GENERATOR] Suma kodow wyjscia (kontrolna): %d\n", suma_exit_code);
-    printf("[GENERATOR] (Ta liczba powinna byc rowna sumie w raporcie koncowym)\n");
 }
 
 int main(int argc, char* argv[])

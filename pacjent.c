@@ -18,22 +18,34 @@ void handle_ewakuacja(int sig) {
     ewakuacja_flaga = 1;
 }
 
+// === TO JEST NAJWAŻNIEJSZA ZMIANA ===
 void wykonaj_ewakuacje_i_wyjdz()
 {
+    // 1. BLOKADA SYGNAŁÓW (CRITICAL SECTION)
+    // Jak już zaczęliśmy uciekać, nic nie może nas zatrzymać (ani zabić)
+    signal(SIGINT, SIG_IGN); // Ignoruj kolejne SIGINT
+    sigset_t mask;
+    sigfillset(&mask);       // Zablokuj wszystkie inne sygnały
+    sigprocmask(SIG_BLOCK, &mask, NULL);
+
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     
     if (stan != (void*)-1) {
+        // Blokujemy pamięć do zapisu
         struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
         struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
         
-        semop(semid, &lock, 1);
+        // Pętla retry dla semafora (chociaż sygnały są zablokowane, więc powinno przejść od razu)
+        while(semop(semid, &lock, 1) == -1) {
+            if(errno == EINTR) continue; 
+            break;
+        }
         
         if (stan_pacjenta == STAN_PRZED_SOR) {
             stan->ewakuowani_sprzed_sor += sem_op_miejsca;
         } 
         else if (stan_pacjenta == STAN_W_POCZEKALNI) {
             stan->ewakuowani_z_poczekalni += sem_op_miejsca;
-            
             if (stan->dlugosc_kolejki_rejestracji > 0) 
                 stan->dlugosc_kolejki_rejestracji--;
         }
@@ -52,7 +64,7 @@ void wykonaj_ewakuacje_i_wyjdz()
         semop(semid, &ewak, 1);
     }
 
-
+    // Wyjście z kodem
     _exit(sem_op_miejsca);
 }
 
@@ -109,18 +121,15 @@ int main(int argc, char *argv[])
 
     CHECK_EWAKUACJA();
 
-    // 1. Próba wejścia (STAN_PRZED_SOR)
     struct sembuf wejscie = {SEM_MIEJSCA_SOR, -sem_op_miejsca, SEM_UNDO};
     while (semop(semid, &wejscie, 1) == -1) {
         if (errno == EINTR) { CHECK_EWAKUACJA(); continue; }
         exit(1);
     }
     
-    // Udało się wejść
     stan_pacjenta = STAN_W_POCZEKALNI;
     CHECK_EWAKUACJA();
 
-    // Zwiększ kolejkę w pamięci
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     if (stan != (void*)-1) {
         struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
@@ -138,7 +147,6 @@ int main(int argc, char *argv[])
     msg.pacjent_pid = mpid;
     msg.czy_vip = vip;
 
-    // 2. Rejestracja
     lock_limit(SLIMIT_REJESTRACJA);
     while (msgsnd(rej_msgid, &msg, sizeof(msg)-sizeof(long), 0) == -1) {
         if (errno == EINTR) { CHECK_EWAKUACJA(); continue; }
@@ -151,7 +159,7 @@ int main(int argc, char *argv[])
     unlock_limit(SLIMIT_REJESTRACJA);
     CHECK_EWAKUACJA();
 
-    if (stan != (void*)-1) { // Aktualizacja kolejki (ponowne podłączenie bo mogło minąć dużo czasu)
+    if (stan != (void*)-1) { 
         stan = (StanSOR*)shmat(shmid, NULL, 0);
         struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
         struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
@@ -161,7 +169,6 @@ int main(int argc, char *argv[])
         shmdt(stan);
     }
 
-    // 3. POZ
     msg.mtype = 1; 
     lock_limit(SLIMIT_POZ);
     while (msgsnd(poz_id, &msg, sizeof(msg)-sizeof(long), 0) == -1) {
@@ -173,7 +180,6 @@ int main(int argc, char *argv[])
     unlock_limit(SLIMIT_POZ);
     CHECK_EWAKUACJA();
 
-    // 4. Specjalista
     if (msg.typ_lekarza > 0) {
         int spec_id = msg.typ_lekarza;
         int qid = msgget(ftok(FILE_KEY, (spec_id==1?'K':spec_id==2?'N':spec_id==3?'L':spec_id==4?'C':spec_id==5?'O':'D')), 0);
@@ -190,7 +196,6 @@ int main(int argc, char *argv[])
     }
     CHECK_EWAKUACJA();
 
-    // 5. Statystyki i wyjście
     StatystykaPacjenta stat;
     stat.mtype = 1;
     stat.czy_vip = vip;
@@ -199,7 +204,6 @@ int main(int argc, char *argv[])
     stat.skierowanie = msg.skierowanie;
     msgsnd(msgid_stat, &stat, sizeof(stat)-sizeof(long), 0);
 
-    // Koniec - pacjent wychodzi normalnie (STAN_WYCHODZI)
     stan_pacjenta = STAN_WYCHODZI;
     if (potrzebny_rodzic && rodzic_utworzony) {
         pthread_cancel(rodzic_thread);
