@@ -9,7 +9,7 @@ all: $(TARGETS)
 
 
 main: main.c wspolne.h
-	$(CC) $(CFLAGS) -o main main.c
+	$(CC) $(CFLAGS) -o main main.c -lpthread
 
 pacjent: pacjent.c wspolne.h
 	$(CC) $(CFLAGS) -o pacjent pacjent.c -lpthread
@@ -22,7 +22,7 @@ rejestracja: rejestracja.c wspolne.h
 
 
 generator: generuj.c wspolne.h
-	$(CC) $(CFLAGS) -o generator generuj.c
+	$(CC) $(CFLAGS) -o generator generuj.c -lpthread -lpthread
 
 
 clean:
@@ -30,4 +30,6 @@ clean:
 
 
 ipc_clean:
-	ipcrm -a
+	ipcs -m | grep `whoami` | awk '{print $$2}' | xargs -r ipcrm -m || true
+	ipcs -s | grep `whoami` | awk '{print $$2}' | xargs -r ipcrm -s || true
+	ipcs -q | grep `whoami` | awk '{print $$2}' | xargs -r ipcrm -q || true

@@ -1,25 +1,65 @@
+#define _GNU_SOURCE
 #include "wspolne.h"
 
-
-
-
 int semid = -1;
+int shmid = -1;
+volatile sig_atomic_t ewakuacja = 0;
+volatile sig_atomic_t sigchld_received = 0;
 
-void handle_sigchld(int sig)
-{
-    int pam_errno = errno;
-    while (waitpid(-1, NULL, WNOHANG) > 0)
-    {
-        if (semid != -1)
-        {
-            struct sembuf unlock;
-            unlock.sem_flg = SEM_UNDO;
-            unlock.sem_num = SEM_GENERATOR;
-            unlock.sem_op  = 1;
+void handle_ewakuacja(int sig) { ewakuacja = 1; }
+void handle_sigchld(int sig) { sigchld_received = 1; }
+
+void zbierz_zombie() {
+    int status;
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        if (semid != -1) {
+            struct sembuf unlock = {SEM_GENERATOR, 1, SEM_UNDO};
             semop(semid, &unlock, 1);
         }
     }
-    errno = pam_errno;
+    sigchld_received = 0;
+}
+
+void procedura_ewakuacji() {
+    signal(SIGINT, SIG_IGN); 
+    signal(SIGTERM, SIG_IGN); 
+
+    printf("\n[GENERATOR] EWAKUACJA: Blokuje dostep do SHM i robie Snapshot...\n");
+
+  
+    struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
+    struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
+    semop(semid, &lock, 1);
+
+    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
+    if (stan != (void*)-1) {
+
+        stan->snap_w_srodku = stan->pacjenci_w_poczekalni;
+        stan->snap_przed_sor = stan->pacjenci_przed_sor;
+        
+        printf("[GENERATOR] Snapshot: W srodku=%d, Przed SOR=%d\n", stan->snap_w_srodku, stan->snap_przed_sor);
+
+      
+        printf("[GENERATOR] Zabijam pacjentow (SIGTERM)...\n");
+        kill(0, SIGTERM);
+
+        shmdt(stan);
+    }
+    
+    semop(semid, &unlock, 1);
+
+    int suma_exit_code = 0;
+    int status;
+    pid_t pid;
+    while ((pid = waitpid(-1, &status, 0)) > 0) {
+        if (WIFEXITED(status)) {
+            suma_exit_code += WEXITSTATUS(status);
+        }
+    }
+    
+    printf("\n[GENERATOR] Ewakuacja zakonczona.\n");
+    printf("[GENERATOR] Suma kodow wyjscia (kontrolna): %d\n", suma_exit_code); //chcesz w_poczekalni + przed_sor -> idz do handler dla pacjenta [wybierz stan_pacjenta < 2]
 }
 
 int main(int argc, char* argv[])
@@ -30,49 +70,52 @@ int main(int argc, char* argv[])
     sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
     sigaction(SIGCHLD, &sa, NULL);
 
-    key_t key_sem = ftok(FILE_KEY, ID_SEM_SET);
-    semid = semget(key_sem, 0, 0);
-    if (semid == -1) {
-        perror("generator: blad semget");
-        exit(1);
+    sa.sa_handler = handle_ewakuacja;
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, NULL); 
+    
+    semid = semget(ftok(FILE_KEY, ID_SEM_SET), 0, 0);
+    shmid = shmget(ftok(FILE_KEY, ID_SHM_MEM), 0, 0);
+    if (semid == -1 || shmid == -1) exit(1);
+
+    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
+    if (stan != (void*)-1) {
+        stan->pacjenci_przed_sor = 0;
+        stan->pacjenci_w_poczekalni = 0;
+        shmdt(stan);
     }
 
     srand(time(NULL) ^ getpid());
-
-    zapisz_raport(KONSOLA, semid, "\n[GENERATOR] Start symulacji. Cel: %d pacjentow (24h).\n", PACJENCI_NA_DOBE);
+    zapisz_raport(KONSOLA, semid, "\n[GENERATOR] Start.\n");
 
     for (int i = 0; i < PACJENCI_NA_DOBE; i++)
     {
-        struct sembuf zajmij = {SEM_GENERATOR, -1, SEM_UNDO};
+        if (ewakuacja) break;
+        if (sigchld_received) zbierz_zombie();
         
-        if (semop(semid, &zajmij, 1) == -1)
-        {
-            if (errno == EINTR) { i--; continue; }
-            perror("generator: semop error");
+        struct sembuf zajmij = {SEM_GENERATOR, -1, SEM_UNDO};
+        if (semop(semid, &zajmij, 1) == -1) {
+            if (errno == EINTR) { if (ewakuacja) break; i--; continue; }
             break;
         }
-
+        
         pid_t pid = fork();
-        if (pid == 0)
-        {
+        if (pid == 0) {
             execl("./pacjent", "pacjent", NULL);
-            perror("generator: execl failed");
             exit(1);
-        }
-        else if (pid == -1)
-        {
-            perror("generator: fork failed");
+        } else if (pid == -1) {
             struct sembuf oddaj = {SEM_GENERATOR, 1, 0};
             semop(semid, &oddaj, 1);
-            usleep(10000); // Backoff
+            usleep(10000);
             i--;
         }
     }
 
-    zapisz_raport(KONSOLA, semid, "[GENERATOR] Wszyscy pacjenci wygenerowani. Czekam na wyjscie ostatnich osob...\n");
-
-    while (wait(NULL) > 0);
-
-    zapisz_raport(KONSOLA, semid, "[GENERATOR] Koniec pracy generatora.\n");
+    if (ewakuacja) {
+        procedura_ewakuacji();
+    } else {
+        zapisz_raport(KONSOLA, semid, "[GENERATOR] Koniec generowania. Czekam na procesy potomne...\n");
+        while(wait(NULL) > 0);
+    }
     return 0;
 }
