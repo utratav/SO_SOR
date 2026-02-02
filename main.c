@@ -79,7 +79,7 @@ void* watek_bramka(void* arg) {
     int local_okienko_otwarte = 0;
     FILE *f = fopen(RAPORT_1, "w"); if(f) fclose(f);
     while (monitor_running) {
-        usleep(200000);
+        usleep(2000);
         if (stan->dlugosc_kolejki_rejestracji > 8 && stan->czy_okienko_2_otwarte == 0) stan->czy_okienko_2_otwarte = 1;
         else if (stan->dlugosc_kolejki_rejestracji < 3 && stan->czy_okienko_2_otwarte == 1) stan->czy_okienko_2_otwarte = 0;
         

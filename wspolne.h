@@ -36,10 +36,9 @@
 #define ID_SEM_SET 'M'
 #define ID_SEM_LIMITS 'X'
 
-// DUŻE DANE TESTOWE
 #define PACJENCI_NA_DOBE 50000
-#define MAX_PACJENTOW 8000
-#define MAX_PROCESOW 10000
+#define MAX_PACJENTOW 800
+#define MAX_PROCESOW 1000
 #define INT_LIMIT_KOLEJEK 500
 
 #define RAPORT_1 "raport1.txt"
@@ -85,9 +84,11 @@ typedef struct
     int dlugosc_kolejki_rejestracji;
     int czy_okienko_2_otwarte;
     
-    int ile_weszlo_ogolem;  
-    int ile_wyszlo_ogolem;  
+    // NOWE LICZNIKI STANU (Zamiast transakcyjnych)
+    int pacjenci_przed_sor;     // Ile osob stoi przed wejsciem (suma wag)
+    int pacjenci_w_poczekalni;  // Ile osob jest fizycznie w srodku (suma wag)
     
+    // Snapshot dla raportu
     int snap_w_srodku;
     int snap_przed_sor;
 } StanSOR;
@@ -147,6 +148,7 @@ static inline void podsumowanie(StatystykiLokalne *stat, StanSOR *stan)
     double p = (double)stat->obs_pacjenci; 
     if (p == 0) p = 1.0; 
     
+    // Pobieramy dane ze snapshota zrobionego przez generator
     int ewak_z_poczekalni = stan->snap_w_srodku;
     int ewak_sprzed_sor = stan->snap_przed_sor;
 

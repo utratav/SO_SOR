@@ -21,38 +21,39 @@ void zbierz_zombie() {
     sigchld_received = 0;
 }
 
-void procedura_ewakuacji(int liczba_wygenerowanych) {
+void procedura_ewakuacji() {
     signal(SIGINT, SIG_IGN); 
     signal(SIGTERM, SIG_IGN); 
 
-    printf("\n[GENERATOR] Robie SNAPSHOT pamieci dzielonej (BLOKADA SWIATA)...\n");
+    printf("\n[GENERATOR] EWAKUACJA: Blokuje dostep do SHM i robie Snapshot...\n");
+
+    // === CRITICAL SECTION: SNAPSHOT & KILL ===
+    // 1. Zablokuj dostęp do pamięci dla wszystkich pacjentów
+    struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
+    struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
+    semop(semid, &lock, 1);
 
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     if (stan != (void*)-1) {
-        struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
-        struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
-        semop(semid, &lock, 1);
-
-        int weszlo = stan->ile_weszlo_ogolem;
-        int wyszlo = stan->ile_wyszlo_ogolem;
+        // 2. Pobierz dokładny stan z liczników (nikt ich teraz nie zmienia bo trzymamy mutex)
+        stan->snap_w_srodku = stan->pacjenci_w_poczekalni;
+        stan->snap_przed_sor = stan->pacjenci_przed_sor;
         
-    
-        stan->snap_w_srodku = weszlo - wyszlo;
-        
-    
-        stan->snap_przed_sor = liczba_wygenerowanych - weszlo;
-        if (stan->snap_przed_sor < 0) stan->snap_przed_sor = 0; // Zabezpieczenie
-
-        printf("[GENERATOR] Snapshot: Wygenerowano=%d, Weszlo=%d, Wyszlo=%d\n", liczba_wygenerowanych, weszlo, wyszlo);
         printf("[GENERATOR] Snapshot: W srodku=%d, Przed SOR=%d\n", stan->snap_w_srodku, stan->snap_przed_sor);
 
+        // 3. Wyślij SIGTERM do wszystkich (pacjenci zrobią exit(waga) lub exit(0))
+        // Robimy to POD MUTEXEM, żeby mieć pewność, że nikt nie zmieni stanu między snapshotem a śmiercią.
         printf("[GENERATOR] Zabijam pacjentow (SIGTERM)...\n");
         kill(0, SIGTERM);
 
-        semop(semid, &unlock, 1);
         shmdt(stan);
     }
+    
+    // 4. Odblokuj pamięć (dopiero teraz, gdy wszyscy dostali sygnał śmierci)
+    semop(semid, &unlock, 1);
+    // =========================================
 
+    // Zbieranie exit code'ów
     int suma_exit_code = 0;
     int status;
     pid_t pid;
@@ -82,11 +83,18 @@ int main(int argc, char* argv[])
     shmid = shmget(ftok(FILE_KEY, ID_SHM_MEM), 0, 0);
     if (semid == -1 || shmid == -1) exit(1);
 
+    // Zerowanie liczników na start (w razie gdyby pamięć była brudna)
+    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
+    if (stan != (void*)-1) {
+        stan->pacjenci_przed_sor = 0;
+        stan->pacjenci_w_poczekalni = 0;
+        shmdt(stan);
+    }
+
     srand(time(NULL) ^ getpid());
     zapisz_raport(KONSOLA, semid, "\n[GENERATOR] Start.\n");
 
-    int i = 0;
-    for (i = 0; i < PACJENCI_NA_DOBE; i++)
+    for (int i = 0; i < PACJENCI_NA_DOBE; i++)
     {
         if (ewakuacja) break;
         if (sigchld_received) zbierz_zombie();
@@ -110,7 +118,7 @@ int main(int argc, char* argv[])
     }
 
     if (ewakuacja) {
-        procedura_ewakuacji(i); // Przekazujemy ile faktycznie wygenerowano
+        procedura_ewakuacji();
     } else {
         zapisz_raport(KONSOLA, semid, "[GENERATOR] Koniec generowania. Czekam na dzieci...\n");
         while(wait(NULL) > 0);
