@@ -43,7 +43,7 @@ void procedura_ewakuacji() {
       
         printf("[GENERATOR] Zabijam pacjentow (SIGTERM)...\n");
         kill(0, SIGTERM);
-
+  
         shmdt(stan);
     }
     
@@ -98,6 +98,7 @@ int main(int argc, char* argv[])
             if (errno == EINTR) { if (ewakuacja) break; i--; continue; }
             break;
         }
+        
         
         pid_t pid = fork();
         if (pid == 0) {

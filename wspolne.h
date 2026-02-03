@@ -35,9 +35,9 @@
 #define ID_SEM_SET 'M'
 #define ID_SEM_LIMITS 'X'
 
-#define PACJENCI_NA_DOBE 50000
-#define MAX_PACJENTOW 800
-#define MAX_PROCESOW 1000
+#define PACJENCI_NA_DOBE 1000
+#define MAX_PACJENTOW 100
+#define MAX_PROCESOW 110
 #define INT_LIMIT_KOLEJEK 500
 
 #define RAPORT_1 "monitor_bramek.txt"
@@ -68,8 +68,10 @@
 
 #define SIG_EWAKUACJA SIGINT
 #define SIG_LEKARZ_ODDZIAL SIGUSR2
+
 #define TYP_VIP 1
 #define TYP_ZWYKLY 2
+
 
 #define STAN_PRZED_SOR 0
 #define STAN_W_POCZEKALNI 1
@@ -187,4 +189,5 @@ static inline void podsumowanie(StatystykiLokalne *stat, StanSOR *stan)
 
     write(STDOUT_FILENO, bufor, pos);
 }
+
 #endif

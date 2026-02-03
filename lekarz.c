@@ -22,10 +22,16 @@ const char* int_to_lekarz(int typ) {
 void praca_poz(int msgid_poz)
 {
     KomunikatPacjenta pacjent;   
+
+    
+
     while(!koniec_pracy)
     {
-        if(msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0, IPC_NOWAIT) == -1) {
-            if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; }
+
+        
+        if(msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0, IPC_NOWAIT) == -1) 
+        {
+            if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; } 
             break;
         } 
         
@@ -33,7 +39,8 @@ void praca_poz(int msgid_poz)
         if (r < 10) pacjent.kolor = CZERWONY;
         else if (r < 45) pacjent.kolor = ZOLTY;
         else if (r < 95) pacjent.kolor = ZIELONY;
-        else {
+        else 
+        {
             pacjent.typ_lekarza = 0;
             pacjent.skierowanie = 1;
             pacjent.kolor = 0;

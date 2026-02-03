@@ -26,7 +26,7 @@ volatile sig_atomic_t ewakuacja_rozpoczeta = 0;
 StatystykiLokalne statystyki;
 pthread_mutex_t stat_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// ... (watek_raport_specjalistow BEZ ZMIAN)
+
 void* watek_raport_specjalistow(void* arg) {
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     if (stan == (void*)-1) return NULL;
@@ -43,7 +43,7 @@ void* watek_raport_specjalistow(void* arg) {
     return NULL;
 }
 
-// ... (watek_statystyki BEZ ZMIAN)
+
 void* watek_statystyki(void* arg) {
     StatystykaPacjenta msg;
     while (monitor_running) {
@@ -73,7 +73,7 @@ void* watek_statystyki(void* arg) {
     return NULL;
 }
 
-// --- WĄTEK BRAMKI (TYLKO WYKONAWCA) ---
+
 void* watek_bramka(void* arg)
 {
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
@@ -81,16 +81,16 @@ void* watek_bramka(void* arg)
     
     int local_okienko_otwarte = 0;
     
-    // Czyścimy raport na start
+
     FILE *f = fopen(RAPORT_1, "w"); if(f) fclose(f);
 
     while (monitor_running) {
-        usleep(5000); // 50ms (szybka reakcja)
+        usleep(5000); 
 
-        // Odczyt flagi ustawionej przez pacjenta (ATOMOWY)
+
         int rozkaz = stan->wymuszenie_otwarcia;
         
-        // Synchronizacja stanu dla innych
+
         if (stan->czy_okienko_2_otwarte != local_okienko_otwarte) {
              stan->czy_okienko_2_otwarte = local_okienko_otwarte;
         }
@@ -106,7 +106,7 @@ void* watek_bramka(void* arg)
                 local_okienko_otwarte = 1;
                 stan->czy_okienko_2_otwarte = 1;
                 
-                // Potwierdzenie akcji w raporcie
+
                 zapisz_raport(RAPORT_1, semid, "[MONITOR] Otwieram bramke nr 2\n");
                 zapisz_raport(KONSOLA, semid, "[MAIN] Otwieram bramke nr 2\n");
             }
@@ -119,7 +119,7 @@ void* watek_bramka(void* arg)
                 local_okienko_otwarte = 0;
                 stan->czy_okienko_2_otwarte = 0;
                 
-                // Potwierdzenie akcji w raporcie
+
                 zapisz_raport(RAPORT_1, semid, "[MONITOR] Zamykam bramke nr 2\n");
                 zapisz_raport(KONSOLA, semid, "[MAIN] Zamykam bramke nr 2\n");
             }
@@ -133,8 +133,8 @@ void* watek_bramka(void* arg)
     return NULL;
 }
 
-// ... (reszta pliku main.c: czyszczenie, signal_handler, uruchom_proces, main - BEZ ZMIAN)
-// Skopiuj resztę pliku main.c z poprzedniej odpowiedzi
+
+
 void czyszczenie() {     
     if (shmid != -1) shmctl(shmid, IPC_RMID, NULL);
     if (semid != -1) semctl(semid, 0, IPC_RMID);
@@ -224,7 +224,7 @@ int main(int argc, char *argv[]) {
 
     printf("[MAIN] Start systemu SOR... (Max pacjentow: %d)\n", MAX_PACJENTOW);
     pid_rejestracja_1 = uruchom_proces("./rejestracja", "SOR_rejestracja", "1");
-    pid_poz = uruchom_proces("./lekarz", "lekarz", "0"); 
+    pid_poz = uruchom_proces("./lekarz", "SOR_POZ", "0"); 
     const char* nazwy_lek[] = {"", "SOR_S_Kardiolog", "SOR_S_Neurolog", "SOR_S_Laryngolog", "SOR_S_Chirurg", "SOR_S_Okulista", "SOR_S_Pediatra"};
     for(int i=1; i<=6; i++) {
         char buff[5]; sprintf(buff, "%d", i); 
