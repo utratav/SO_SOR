@@ -106,7 +106,7 @@ void* watek_bramka(void* arg)
                 local_okienko_otwarte = 1;
                 stan->czy_okienko_2_otwarte = 1;
                 
-                // Potwierdzenie akcji w raporcie
+
                 zapisz_raport(RAPORT_1, semid, "[MONITOR] Otwieram bramke nr 2\n");
                 zapisz_raport(KONSOLA, semid, "[MAIN] Otwieram bramke nr 2\n");
             }
@@ -119,7 +119,7 @@ void* watek_bramka(void* arg)
                 local_okienko_otwarte = 0;
                 stan->czy_okienko_2_otwarte = 0;
                 
-                // Potwierdzenie akcji w raporcie
+
                 zapisz_raport(RAPORT_1, semid, "[MONITOR] Zamykam bramke nr 2\n");
                 zapisz_raport(KONSOLA, semid, "[MAIN] Zamykam bramke nr 2\n");
             }
@@ -224,7 +224,7 @@ int main(int argc, char *argv[]) {
 
     printf("[MAIN] Start systemu SOR... (Max pacjentow: %d)\n", MAX_PACJENTOW);
     pid_rejestracja_1 = uruchom_proces("./rejestracja", "SOR_rejestracja", "1");
-    pid_poz = uruchom_proces("./lekarz", "lekarz", "0"); 
+    pid_poz = uruchom_proces("./lekarz", "SOR_POZ", "0"); 
     const char* nazwy_lek[] = {"", "SOR_S_Kardiolog", "SOR_S_Neurolog", "SOR_S_Laryngolog", "SOR_S_Chirurg", "SOR_S_Okulista", "SOR_S_Pediatra"};
     for(int i=1; i<=6; i++) {
         char buff[5]; sprintf(buff, "%d", i); 
