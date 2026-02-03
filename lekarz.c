@@ -29,7 +29,7 @@ void praca_poz(int msgid_poz)
     {
 
         
-        if(msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0, IPC_NOWAIT) == -1) 
+        if(msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), -1, IPC_NOWAIT) == -1) 
         {
             if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; } 
             break;

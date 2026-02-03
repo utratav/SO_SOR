@@ -103,7 +103,8 @@ int main(int argc, char* argv[])
         pid_t pid = fork();
         if (pid == 0) {
             execl("./pacjent", "pacjent", NULL);
-            exit(1);
+            perror("blad forka w generatorze");
+            _exit(1);
         } else if (pid == -1) {
             struct sembuf oddaj = {SEM_GENERATOR, 1, 0};
             semop(semid, &oddaj, 1);
