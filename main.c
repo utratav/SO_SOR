@@ -81,16 +81,16 @@ void* watek_bramka(void* arg)
     
     int local_okienko_otwarte = 0;
     
-
+    
     FILE *f = fopen(RAPORT_1, "w"); if(f) fclose(f);
 
     while (monitor_running) {
         usleep(5000); 
 
-
+        
         int rozkaz = stan->wymuszenie_otwarcia;
         
-
+        
         if (stan->czy_okienko_2_otwarte != local_okienko_otwarte) {
              stan->czy_okienko_2_otwarte = local_okienko_otwarte;
         }
