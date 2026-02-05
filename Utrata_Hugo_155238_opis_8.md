@@ -1366,3 +1366,85 @@ make clean
 # Usunięcie zasobów IPC (w przypadku niespodziewanego zakończenia)
 make ipc_clean
 ```
+
+### T1
+
+## Czy Użycie semafora pred kolejką komunikatów skutecznie uniemożliwia zapchanie kolejki i w konsekwencji chroni przed deadlockiem?
+
+Będe używał stwierdzenia procesy SOR - chodzi mi o rejestracje, POZ, specjalistów - implementacja komunikacji pomiędzy pacjentem, a każdym procesem SOR jest taka sama.
+
+**Założena:**
+
+* Każda z 8 kolejek komunikatów posiada osobisty semafor obniżany w przed wysłaniem wiadomości do procesu SOR, podwyższany po otrzymaniu wiadomości zwrotnej.
+  
+* Każda kolejka ma maksymalnie 682 slotów (systemowy limit w bajtach / sizeof(msg) - sizeof(long)) - pozostałe procesy czekają. Wartość semaforów musi być < 682.
+  
+* Każdy proces SOR przyjmuję według ustalonego wcześniej priorytetu - Pacjenci VIP / Pacjenci z kolorem czerwonym powinni być obsłużeni szybciej od pozostałych.
+
+**Potencjalne problemy:**
+
+* Każdy Pacjent wykonuje operację semop z flagą `SEM_UNDO` - jest ona newralgiczna z bardzo prostego powodu - kiedy Pacjent zexituje / dostanie sygnał terminujący w sekcji krytycznej (przed podwyższeniem semafora, który wcześniej obniżał)
+  System automatycznie wykona inkrementację na semaforze o wartości op, którą proces użył "wchodząc" przez semafor - nie blokując tym samym semafora do końca wykonywania programu.
+  
+* Użycie `SEM_UNDO` jest wskazane, ale budzi ono szereg innych problemów. Jeśli semafor jest jedyną blokadą przed faktyczną drogą komunikacji istnieje możliwość, że pacjent po wysłaniu wiadomości do processu SOR, a jeszcze przed
+  otrzymaniem wiadomości zwrotnej dostanie sygnał terminujący jego działanie (w testach zwykły exit wystarczy). System automatycznie dokona inkrementacji na semaforze i w konsekwencji przez semafor wejdzie kolejny pacjent.
+  Oczywiście jeden exitujacy proces nie spowoduje wiele szkód, ale co jeśli takich pacjentów jest 500? Nagle Kolejka jest 1000 wiadomości, a proces SOR - np. rejestracja nie ma wolnych slotów do wysłania wiadomości zwrotnej - mamy deadlocka.
+  
+* Od razu nasuwa się pomysł żeby po msgrcv proces SOR patzrył czy proces w ogóle istnieje - znamy jego PID z wiadomośći, którą przesyła oraz posiadamy permisję - wystarczy kill(pid, 0). Jednak to tylko częściowo rozwiąże nasz problem z prostego powodu:
+
+**Tak wygląda nasza kolejka gdy pierwsze 500 pacjentów obniża semafor i wysyła wiadomośc i załóżmy, że robi sleep(5) - nie robi msgrcv:**
+
+<img width="1126" height="129" alt="image" src="https://github.com/user-attachments/assets/95da7b42-b821-4273-a1bd-5f6075c00a7d" />
+
+Mamy FIFO posortowane według priorytetu, gdzie vip o wartość | -1 | będzie obsłużony szybciej od zwykłego | -2 |
+
+
+
+W przypadku wykonania `SEM_UNDO` przez semafor wchodzi kolejne 500 osób, ich wiadomości są wymieszane z tymi, którzy już nie żyją, ALE co najważniejsze - posortowane według priorytetu.
+
+<img width="1510" height="145" alt="image" src="https://github.com/user-attachments/assets/26c6005e-f247-4557-9fb8-be91ce7aa6f8" />
+szary kolor oznacza nieżywych pacjentów*
+
+Proces SOR zobaczy, że pierwsze 3 pacjentów już nie istnieje - skutecznie opróżni kolejke o te (3) wiadomości, jednak następnie trafi na "żywego" vip i się zablokuje bo l. wiadomości nadal jest > 682 (limit).
+
+* Rozwiązaniem jest dynamiczny bufor, który - gdy kolejka jest pełna - zapisze strukture żywego pacjenta, następnie przejdzie do anulowania kolejnego nieżywego pacjenta.
+
+
+**Przebieg testu:**
+
+* rejestracja wykonuje sleep(60) - czeka na zapchanie kolejki
+
+* wchodzi pierwsze 500 pacjentow - obnizaja semafor, robia exit(0) pomiedzy msgsnd, a msgrcv.
+  
+* <img width="561" height="174" alt="Zrzut ekranu 2026-02-05 040232" src="https://github.com/user-attachments/assets/2ff81e93-b47d-4a08-8cc8-2c90deb0afce" />
+
+  
+
+
+* w ipcs -q nadal widzimy 500 wiadomości - wiadomości istnieją - pacjenci nie.
+
+* wchodzi kolejne 500 pacjentów - zapełniają kolejkę do maksymalnego limitu.
+
+* rejestracja się budzi i dokonuje czyszczenia
+  
+* <img width="648" height="548" alt="Zrzut ekranu 2026-02-05 040407" src="https://github.com/user-attachments/assets/9ff3e69e-9d1f-4d02-930e-8056198f86ba" />
+
+
+
+
+**Podgląd w IPCS:**
+* <img width="466" height="162" alt="Zrzut ekranu 2026-02-05 040438" src="https://github.com/user-attachments/assets/a5eebcf2-1a58-4cc8-9765-0e472a7e9b7a" />
+
+
+
+
+  
+
+
+
+
+
+
+
+
+          
