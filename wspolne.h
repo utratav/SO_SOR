@@ -35,9 +35,9 @@
 #define ID_SEM_SET 'M'
 #define ID_SEM_LIMITS 'X'
 
-#define PACJENCI_NA_DOBE 1000
-#define MAX_PACJENTOW 100
-#define MAX_PROCESOW 110
+#define PACJENCI_NA_DOBE 12000
+#define MAX_PACJENTOW 8000
+#define MAX_PROCESOW 10000
 #define INT_LIMIT_KOLEJEK 500
 
 #define RAPORT_1 "monitor_bramek.txt"
@@ -186,6 +186,9 @@ static inline void podsumowanie(StatystykiLokalne *stat, StanSOR *stan)
     pos += sprintf(bufor + pos, "Ewakuowani sprzed SOR (W_KOLEJCE):  %d\n", ewak_sprzed_sor);
     pos += sprintf(bufor + pos, "RAZEM (wg StanSOR):                 %d\n", ewak_z_poczekalni + ewak_sprzed_sor);
     pos += sprintf(bufor + pos, "==============================================\n");
+
+
+  
 
     write(STDOUT_FILENO, bufor, pos);
 }

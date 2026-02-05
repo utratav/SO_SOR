@@ -81,15 +81,12 @@ void* watek_bramka(void* arg)
     
     int local_okienko_otwarte = 0;
     
-
     FILE *f = fopen(RAPORT_1, "w"); if(f) fclose(f);
 
     while (monitor_running) {
-        usleep(5000); 
-
-
-        int rozkaz = stan->wymuszenie_otwarcia;
+        usleep(500); 
         
+        int rozkaz = stan->wymuszenie_otwarcia;
 
         if (stan->czy_okienko_2_otwarte != local_okienko_otwarte) {
              stan->czy_okienko_2_otwarte = local_okienko_otwarte;
@@ -106,7 +103,6 @@ void* watek_bramka(void* arg)
                 local_okienko_otwarte = 1;
                 stan->czy_okienko_2_otwarte = 1;
                 
-
                 zapisz_raport(RAPORT_1, semid, "[MONITOR] Otwieram bramke nr 2\n");
                 zapisz_raport(KONSOLA, semid, "[MAIN] Otwieram bramke nr 2\n");
             }
@@ -119,7 +115,6 @@ void* watek_bramka(void* arg)
                 local_okienko_otwarte = 0;
                 stan->czy_okienko_2_otwarte = 0;
                 
-
                 zapisz_raport(RAPORT_1, semid, "[MONITOR] Zamykam bramke nr 2\n");
                 zapisz_raport(KONSOLA, semid, "[MAIN] Zamykam bramke nr 2\n");
             }
@@ -230,6 +225,9 @@ int main(int argc, char *argv[]) {
         char buff[5]; sprintf(buff, "%d", i); 
         pid_lekarze[i] = uruchom_proces("./lekarz", nazwy_lek[i], buff);
     }
+
+
+    
     
     FILE *f = fopen(RAPORT_1, "w"); if(f) fclose(f);
     f = fopen(RAPORT_2, "w"); if(f) fclose(f);
@@ -238,6 +236,7 @@ int main(int argc, char *argv[]) {
     if (argc > 1 && strcmp(argv[1], "auto") == 0) {
         pid_dyrektor = fork();
         if (pid_dyrektor == 0) {
+            sleep(1);
             signal(SIGINT, SIG_IGN);
             signal(SIGTERM, SIG_IGN); 
             StanSOR *stan_child = (StanSOR*)shmat(shmid, NULL, 0);

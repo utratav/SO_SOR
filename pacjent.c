@@ -10,6 +10,8 @@ int rej_msgid = -1;
 int poz_id = -1;
 
 
+
+
 volatile sig_atomic_t stan_pacjenta = STAN_PRZED_SOR;
 int sem_op_miejsca = 1; // NAZWA JEST MYLĄCA - CHODZI O TO CZY TRAKTUJEMY PROCES JAKO JEDNA CZY DWIE OSOBY (DZIEKO + RODZIC) WAZNE PRZY EXITCIE
 pthread_t rodzic_thread;
@@ -49,11 +51,21 @@ void aktualizuj_liczniki(int zmiana_przed, int zmiana_wew, int zmiana_kolejki_re
         stan->pacjenci_przed_sor += zmiana_przed;
         stan->pacjenci_w_poczekalni += zmiana_wew;
         stan->dlugosc_kolejki_rejestracji += zmiana_kolejki_rej;
+
+      
         
         int q = stan->dlugosc_kolejki_rejestracji;
         int cmd = stan->wymuszenie_otwarcia;
-        if (q > PROG_OTWARCIA && cmd == 0) stan->wymuszenie_otwarcia = 1;
-        else if (q < PROG_ZAMKNIECIA && cmd == 1) stan->wymuszenie_otwarcia = 0;
+        if (q > PROG_OTWARCIA && cmd == 0) 
+        {
+        stan->wymuszenie_otwarcia = 1;
+        zapisz_raport(RAPORT_1, semid, "[ Pacjent ] wymuszam otwarcie bramki numer 2\n");
+        }
+        else if (q < PROG_ZAMKNIECIA && cmd == 1) 
+        {
+        stan->wymuszenie_otwarcia = 0;
+        zapisz_raport(RAPORT_1, semid, "[ Pacjent ] wymuszam zamkniecie bramki numer 2\n");
+        }
         
         semop(semid, &unlock, 1);
         shmdt(stan);
@@ -70,8 +82,9 @@ void unlock_limit(int sem_indeks) {
 }
 
 void wykonaj_ipc_samodzielnie(int qid, int limit_id, KomunikatPacjenta *msg) {
+
     lock_limit(limit_id);
-    while (msgsnd(qid, msg, sizeof(KomunikatPacjenta)-sizeof(long), 0) == -1) if(errno!=EINTR) break;
+    while (msgsnd(qid, msg, sizeof(KomunikatPacjenta)-sizeof(long), 0) == -1) if(errno!=EINTR) break;   
     while (msgrcv(qid, msg, sizeof(KomunikatPacjenta)-sizeof(long), msg->pacjent_pid, 0) == -1) if(errno!=EINTR) break;
     unlock_limit(limit_id);
 }
@@ -148,6 +161,9 @@ int main(int argc, char *argv[])
     signal(SIGINT, SIG_IGN);          
     signal(SIGTERM, handle_kill);     
 
+    signal(SIGTSTP, SIG_DFL);
+    signal(SIGCONT, SIG_DFL);
+
     srand(time(NULL) ^ getpid());
     stan_pacjenta = STAN_PRZED_SOR;
 
@@ -199,23 +215,25 @@ int main(int argc, char *argv[])
     aktualizuj_liczniki(-1, 1, 1); 
     stan_pacjenta = STAN_W_POCZEKALNI;
 
+
     if (RODZIC_POTRZEBNY) {
         OpiekunSync.dane_pacjenta = msg; 
         zlec_opiekunowi(ZADANIE_REJESTRACJA);
         msg = OpiekunSync.dane_pacjenta;
     } else {
         wykonaj_ipc_samodzielnie(rej_msgid, SLIMIT_REJESTRACJA, &msg);
-    }
+    }  
     
-    aktualizuj_liczniki(0, 0, -1);
 
+
+    aktualizuj_liczniki(0, 0, -1);
 
     if (RODZIC_POTRZEBNY) {
         OpiekunSync.dane_pacjenta = msg;
         zlec_opiekunowi(ZADANIE_POZ);
         msg = OpiekunSync.dane_pacjenta;
     } else {
-        msg.mtype = 1;
+        msg.mtype = 1; //w pdfie nie ma nic o priorytecie dla poz 
         wykonaj_ipc_samodzielnie(poz_id, SLIMIT_POZ, &msg);
     }
 
