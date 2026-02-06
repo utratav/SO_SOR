@@ -76,21 +76,10 @@ Generator pacjentów (`generuj.c`) jest odpowiedzialny za dynamiczne tworzenie p
 #### A.1. Ograniczanie liczby jednoczesnych procesów
 
 Przed każdym wywołaniem `fork()`, generator wykonuje operację P na semaforze `SEM_GENERATOR`, który jest inicjalizowany wartością `MAX_PROCESOW` (wartość wedle uznania, ogranicza nas systemowy max dla semafora). Jeśli limit jest wyczerpany, proces generatora blokuje się do momentu zwolnienia miejsca.
-[forkowanie i semop: generuj.c](https://github.com/utratav/SO_SOR/blob/6a2d4ddc1b12a0f1faf187c07c8beecec18a9cdf/generuj.c#L96-L111)
-```c
-// generuj.c - pętla główna
-struct sembuf zajmij = {SEM_GENERATOR, -1, SEM_UNDO};
-if (semop(semid, &zajmij, 1) == -1) {
-    if (errno == EINTR) { if (ewakuacja) break; i--; continue; }
-    break;
-}
 
-pid_t pid = fork();
-if (pid == 0) {
-    execl("./pacjent", "pacjent", NULL);
-    exit(1);
-}
-```
+[forkowanie i semop: generuj.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/generuj.c#L91-L115)
+
+
 
 Flaga `SEM_UNDO` zapewnia automatyczne zwolnienie semafora w przypadku nieoczekiwanego zakończenia procesu generatora.
 
@@ -98,25 +87,8 @@ Flaga `SEM_UNDO` zapewnia automatyczne zwolnienie semafora w przypadku nieoczeki
 
 Kiedy proces pacjenta kończy działanie (przez `exit()` lub sygnał), jądro wysyła sygnał `SIGCHLD` do procesu rodzica (generatora). Handler ustawia flagę `sigchld_received`, a właściwa obsługa odbywa się w funkcji `zbierz_zombie()`:
 
-[zbieranie zombie: generuj.c](https://github.com/utratav/SO_SOR/blob/6a2d4ddc1b12a0f1faf187c07c8beecec18a9cdf/generuj.c#L7-L22)
-```c
-// generuj.c - handler i obsługa SIGCHLD
-volatile sig_atomic_t sigchld_received = 0;
+[zbieranie zombie: generuj.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/generuj.c#L6-L22)
 
-void handle_sigchld(int sig) { sigchld_received = 1; }
-
-void zbierz_zombie() {
-    int status;
-    pid_t pid;
-    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        if (semid != -1) {
-            struct sembuf unlock = {SEM_GENERATOR, 1, SEM_UNDO};
-            semop(semid, &unlock, 1);
-        }
-    }
-    sigchld_received = 0;
-}
-```
 
 Funkcja `waitpid(-1, &status, WNOHANG)` zbiera statusy zakończonych dzieci bez blokowania. Dla każdego zebranego procesu, semafor `SEM_GENERATOR` jest podnoszony (+1), zwalniając miejsce dla nowego pacjenta.
 
@@ -124,16 +96,9 @@ Funkcja `waitpid(-1, &status, WNOHANG)` zbiera statusy zakończonych dzieci bez 
 
 Struktura `sigaction` jest konfigurowana z kluczowymi flagami:
 
-[struktura sigaction dla SIGCHLD: generuj.c](https://github.com/utratav/SO_SOR/blob/6a2d4ddc1b12a0f1faf187c07c8beecec18a9cdf/generuj.c#L67-L75)
+[struktura sigaction dla SIGCHLD: generuj.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/generuj.c#L67-L75)
 
-```c
-// generuj.c - konfiguracja sygnałów
-struct sigaction sa;
-sa.sa_handler = handle_sigchld;
-sigemptyset(&sa.sa_mask);
-sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
-sigaction(SIGCHLD, &sa, NULL);
-```
+
 
 * **`SA_RESTART`**: Po obsłużeniu sygnału `SIGCHLD`, przerwane wywołanie systemowe (np. `semop`) zostanie automatycznie wznowione zamiast zwracać błąd `EINTR`.
 * **`SA_NOCLDSTOP`**: Sygnał `SIGCHLD` będzie wysyłany tylko przy faktycznym zakończeniu procesu potomnego, nie przy jego zatrzymaniu (`SIGSTOP`).
@@ -150,75 +115,25 @@ Centralna struktura `StanSOR` w pamięci dzielonej przechowuje globalny stan sys
 
 #### B.1. Definicja struktury StanSOR
 
-[definicja StanSor: wspolne.h](https://github.com/utratav/SO_SOR/blob/6a2d4ddc1b12a0f1faf187c07c8beecec18a9cdf/wspolne.h#L81-L96)
+[definicja StanSor: wspolne.h](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/wspolne.h#L83-L98)
 
-```c
-// wspolne.h - struktura pamięci dzielonej
-typedef struct 
-{
-    int symulacja_trwa;              // Flaga aktywności symulacji
-    int dostepni_specjalisci[7];     // Status dostępności lekarzy [0-6]
-    int dlugosc_kolejki_rejestracji; // Aktualna długość kolejki
-    int czy_okienko_2_otwarte;       // Status drugiego okienka (0/1)
-    
-    int pacjenci_przed_sor;          // Liczba osób czekających na wejście
-    int pacjenci_w_poczekalni;       // Liczba osób wewnątrz SOR
-    
-    int wymuszenie_otwarcia;         // Rozkaz otwarcia/zamknięcia okienka 2
-    
-    int snap_w_srodku;               // Snapshot dla ewakuacji
-    int snap_przed_sor;              // Snapshot dla ewakuacji
-} StanSOR;
-```
+
 
 #### B.2. Inicjalizacja pamięci dzielonej
 
 Pamięć dzielona jest tworzona i inicjalizowana w procesie `main`:
 
-[inicjalizacja shm w main: main.c](https://github.com/utratav/SO_SOR/blob/6a2d4ddc1b12a0f1faf187c07c8beecec18a9cdf/main.c#L207-L212)
+[inicjalizacja shm w main: main.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/main.c#L202-L207)
 
-```c
-// main.c - tworzenie i inicjalizacja
-key_t key_shm = ftok(FILE_KEY, ID_SHM_MEM);
-shmid = shmget(key_shm, sizeof(StanSOR), IPC_CREAT | 0600);
-StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
-memset(stan, 0, sizeof(StanSOR));
-stan->symulacja_trwa = 1;
-for (int i = 1; i <= 6; i++) stan->dostepni_specjalisci[i] = 1;
-shmdt(stan);
-```
+
 
 Wszystkie pola są zerowane przez `memset()`, po czym ustawiane są wartości początkowe: flaga symulacji oraz dostępność wszystkich specjalistów.
 
 #### B.3. Ochrona dostępu mutexem (SEM_DOSTEP_PAMIEC)
 
 Każda* operacja na strukturze `StanSOR` musi być otoczona sekcją krytyczną z wykorzystaniem semafora `SEM_DOSTEP_PAMIEC`:
-[przyklad dla pacjenta: pacjent.c](https://github.com/utratav/SO_SOR/blob/6a2d4ddc1b12a0f1faf187c07c8beecec18a9cdf/pacjent.c#L17-L50)
-```c
-// pacjent.c - funkcja aktualizuj_liczniki()
-void aktualizuj_liczniki(int zmiana_przed, int zmiana_wew, int zmiana_kolejki_rej) {
-    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
-    if (stan != (void*)-1) {
-        struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
-        struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
-        
-        while(semop(semid, &lock, 1) == -1) { 
-            if (errno == EINTR) continue; 
-            return;
-        }
-        
-        // Modyfikacje struktury StanSOR
-        stan->pacjenci_przed_sor += zmiana_przed;
-        stan->pacjenci_w_poczekalni += zmiana_wew;
-        stan->dlugosc_kolejki_rejestracji += zmiana_kolejki_rej;
-        
-        // ... logika progów otwarcia/zamknięcia okienka ...
-        
-        semop(semid, &unlock, 1);
-        shmdt(stan);
-    }
-}
-```
+[przyklad dla pacjenta: pacjent.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/pacjent.c#L44-L73)
+
 
 Wzorzec `while(semop(...) == -1) { if (errno == EINTR) continue; }` zapewnia poprawną obsługę przerwań sygnałami podczas oczekiwania na semafor.
 
@@ -234,8 +149,8 @@ Progi są zdefiniowane jako makra w `wspolne.h`:
 
 ```c
 // wspolne.h - definicje progów
-#define PROG_OTWARCIA (MAX_PACJENTOW / 2)   // >= 400 dla MAX_PACJENTOW=800
-#define PROG_ZAMKNIECIA (MAX_PACJENTOW / 3) // < 266 dla MAX_PACJENTOW=800
+#define PROG_OTWARCIA (MAX_PACJENTOW / 2)  
+#define PROG_ZAMKNIECIA (MAX_PACJENTOW / 3)
 ```
 
 Rożne progi zwalniające zapobiegają oscylacji stanu przy granicznym obciążeniu.
@@ -244,24 +159,8 @@ Rożne progi zwalniające zapobiegają oscylacji stanu przy granicznym obciąże
 
 Proces pacjenta przy wejściu do poczekalni sprawdza długość kolejki i ustawia flagę `wymuszenie_otwarcia` w pamięci dzielonej:
 
-[flaga w shm: pacjent.c](https://github.com/utratav/SO_SOR/blob/6a2d4ddc1b12a0f1faf187c07c8beecec18a9cdf/pacjent.c#L36-L45)
+[flaga w shm: pacjent.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/pacjent.c#L57-L68)
 
-```c
-// pacjent.c - fragment aktualizuj_liczniki()
-int q = stan->dlugosc_kolejki_rejestracji;
-int cmd = stan->wymuszenie_otwarcia;
-
-if (q > PROG_OTWARCIA && cmd == 0) 
-{
-    stan->wymuszenie_otwarcia = 1;
-    zapisz_raport(RAPORT_1, semid, "[ Pacjent ] wymuszam otwarcie bramki numer 2\n");
-}
-else if (q < PROG_ZAMKNIECIA && cmd == 1) 
-{
-    stan->wymuszenie_otwarcia = 0;
-    zapisz_raport(RAPORT_1, semid, "[ Pacjent ] wymuszam zamkniecie bramki numer 2\n");
-}
-```
 
 Przy 10 000 procesów istnieje 99.99% szans, że to pacjent pierwszy wykryje potrzebę otwarcia drugiej bramki - korzystamy z tego, że akurat wchodzi do pamięci dzielonej chronionej mutexem.
 Pełni on rolę czujnika - gdy nadejdzie potrzeba ustawia flage wymuszenia otwarcia.
@@ -270,62 +169,9 @@ Pełni on rolę czujnika - gdy nadejdzie potrzeba ustawia flage wymuszenia otwar
 
 Właściwe sterowanie okienkiem odbywa się w dedykowanym wątku `watek_bramka` działającym w procesie `main`. Wątek sprawdza flagę `wymuszenie_otwarcia` i wykonuje odpowiednie akcje:
 
-[watek_bramka: main.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/main.c#L77-L134)
+[watek_bramka: main.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/main.c#L77-L129)
 
-```c
-// main.c - wątek watek_bramka()
-void* watek_bramka(void* arg)
-{
-    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
-    if (stan == (void*)-1) return NULL;
-    
-    int local_okienko_otwarte = 0;
-    
-    while (monitor_running) {
-        usleep(5000); // 5ms - szybka reakcja
 
-        int rozkaz = stan->wymuszenie_otwarcia;
-        
-        // Synchronizacja stanu dla innych procesów
-        if (stan->czy_okienko_2_otwarte != local_okienko_otwarte) {
-             stan->czy_okienko_2_otwarte = local_okienko_otwarte;
-        }
-
-        if (!local_okienko_otwarte && rozkaz == 1) {
-            // OTWARCIE: fork + execl nowego procesu rejestracji
-            pid_t pid = fork();
-            if (pid == 0) {               
-                signal(SIGTERM, SIG_DFL);
-                execl("./rejestracja", "SOR_rejestracja", "2", NULL);
-                exit(1);
-            } else if (pid > 0) {
-                pid_rejestracja_2 = pid;
-                local_okienko_otwarte = 1;
-                stan->czy_okienko_2_otwarte = 1;
-                zapisz_raport(RAPORT_1, semid, "[MONITOR] Otwieram bramke nr 2\n");
-            }
-        } 
-        else if (local_okienko_otwarte && rozkaz == 0) {
-            // ZAMKNIĘCIE: wysłanie SIGINT i oczekiwanie na zakończenie
-            if (pid_rejestracja_2 > 0) {
-                kill(pid_rejestracja_2, SIGINT);
-                waitpid(pid_rejestracja_2, NULL, 0);
-                pid_rejestracja_2 = -1;
-                local_okienko_otwarte = 0;
-                stan->czy_okienko_2_otwarte = 0;
-                zapisz_raport(RAPORT_1, semid, "[MONITOR] Zamykam bramke nr 2\n");
-            }
-        }
-    }
-    // Sprzątanie przy zakończeniu wątku
-    if (local_okienko_otwarte && pid_rejestracja_2 > 0) {
-        kill(pid_rejestracja_2, SIGTERM);
-        waitpid(pid_rejestracja_2, NULL, 0);
-    }
-    shmdt(stan);
-    return NULL;
-}
-```
 Co ważne, wątek nie wchodzi do pamięci dzielonej nie korzystając z mutexu - flaga otwarcia drugiej bramki jest atomowa 0/1 - przez to reakcja jest niemalże natychmiastowa.
 
 Wątek utrzymuje lokalny stan `local_okienko_otwarte`, który jest synchronizowany z pamięcią dzieloną. Dzięki temu inne procesy mogą odczytać aktualny status okienka.
@@ -340,75 +186,9 @@ Proces rejestracji (`rejestracja.c`) w pętli odbiera komunikaty od pacjentów i
 
 3. **Opróżnianie bufora** – na początku każdej iteracji pętli, jeśli bufor zawiera oczekujące wiadomości, rejestracja sprawdza stan kolejki przez `msgctl(IPC_STAT)` i próbuje odesłać zbuforowane komunikaty dopóki kolejka ma wolne miejsce.
 
-[główna pętla rejestracji: rejestracja.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/rejestracja.c#L29-L48)
+[główna pętla rejestracji: rejestracja.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/rejestracja.c#L63-L121)
 
-```c
-// rejestracja.c - inicjalizacja bufora
-struct msqid_ds stan_kolejki;
-pobierz_stan_kolejki(msgid_we, &stan_kolejki);
-size_t rozmiar_pojedynczej_wiadomosci = sizeof(KomunikatPacjenta) - sizeof(long);
-int max_msg_limit = stan_kolejki.msg_qbytes / rozmiar_pojedynczej_wiadomosci;
 
-bufor_pojemnosc = max_msg_limit; 
-bufor_oczekujacych = (KomunikatPacjenta*)malloc(bufor_pojemnosc * sizeof(KomunikatPacjenta));
-```
-
-```c
-// rejestracja.c - główna pętla z buforem i weryfikacją pacjenta
-while(!koniec_pracy)
-{
-    pobierz_stan_kolejki(msgid_we, &stan_kolejki);
-
-    // Opróżnianie bufora gdy kolejka ma wolne miejsce
-    if (bufor_licznik > 0) {
-        if (stan_kolejki.msg_qnum < max_msg_limit) { 
-            for (int i = 0; i < bufor_licznik; i++) {
-                if (msgsnd(msgid_we, &bufor_oczekujacych[i], rozmiar_pojedynczej_wiadomosci, IPC_NOWAIT) != -1) {
-                    zapisz_raport(KONSOLA, semid, "[ Rejestracja %d ] Wznowiono z bufora: %d\n", 
-                                 nr_okienka, bufor_oczekujacych[i].pacjent_pid);
-                    for(int j=i; j<bufor_licznik-1; j++) bufor_oczekujacych[j] = bufor_oczekujacych[j+1];
-                    bufor_licznik--;
-                    i--; 
-                } else {
-                    if (errno == EAGAIN) break; 
-                }
-            }
-        }
-    }
-
-    ssize_t status = msgrcv(msgid_we, &pacjent, rozmiar_pojedynczej_wiadomosci, -2, IPC_NOWAIT);
-    if (status == -1) {
-        if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; }
-        break;
-    }
-
-    pacjent.mtype = pacjent.pacjent_pid; 
-
-    // Weryfikacja czy pacjent nadal żyje
-    if (kill(pacjent.pacjent_pid, 0) == -1 && errno == ESRCH) {
-        zapisz_raport(KONSOLA, semid, "[ Rejestracja %d ] Brak informacji o pacjencie %d (exit), Anuluje wysylanie wiadomosci\n",
-                     nr_okienka, pacjent.pacjent_pid);
-        continue; 
-    }
-
-    // Wysyłanie z IPC_NOWAIT - przy pełnej kolejce pacjent trafia do bufora
-    if(msgsnd(msgid_we, &pacjent, rozmiar_pojedynczej_wiadomosci, IPC_NOWAIT) != -1) {
-        if(!koniec_pracy) {
-            zapisz_raport(KONSOLA, semid, "[ Rejestracja %d ] Pacjent %d -> POZ\n", nr_okienka, pacjent.pacjent_pid);
-        }
-    } 
-    else if (errno == EAGAIN) {
-        if (bufor_licznik < bufor_pojemnosc) {
-            bufor_oczekujacych[bufor_licznik++] = pacjent;
-            zapisz_raport(KONSOLA, semid, "[ Rejestracja %d ] KOLEJKA FULL Pacjent %d -> BUFOR (%d/%d).\n", 
-                         nr_okienka, pacjent.pacjent_pid, bufor_licznik, bufor_pojemnosc);
-        } else {
-            zapisz_raport(KONSOLA, semid, "[CRITICAL] BUFOR PRZEPELNIONY! Pacjent %d porzucony.\n", pacjent.pacjent_pid);
-        }
-    }       
-}
-if (bufor_oczekujacych) free(bufor_oczekujacych);
-```
 
 Flaga `IPC_NOWAIT` w `msgrcv()` sprawia, że proces nie blokuje się gdy kolejka jest pusta – zamiast tego zwraca błąd `ENOMSG`, co pozwala na responsywne sprawdzanie flagi `koniec_pracy`.
 
@@ -420,20 +200,8 @@ Ujemna wartość `-2` w argumencie `msgtype` oznacza odbiór wiadomości o typie
 
 #### D.1. Struktura komunikatu pacjenta
 
-[struktura dla kolejek: wspolne.h](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/wspolne.h#L98-L106)
+[struktura dla kolejek: wspolne.h](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/wspolne.h#L100-L108)
 
-```c
-// wspolne.h - struktura komunikatu
-typedef struct {
-    long mtype;        // Typ wiadomości (priorytet/PID)
-    pid_t pacjent_pid; // PID procesu pacjenta
-    int typ_lekarza;   // Docelowy specjalista (0=POZ, 1-6=specjaliści)
-    int czy_vip;       // Flaga VIP
-    int wiek;          // Wiek pacjenta
-    int kolor;         // Kolor triażu (1=czerwony, 2=żółty, 3=zielony)
-    int skierowanie;   // Decyzja końcowa (1=dom, 2=oddział, 3=inna placówka)
-} KomunikatPacjenta;
-```
 
 Pole `mtype` pełni podwójną rolę:
 * **Przy wysyłaniu DO lekarza**: oznacza priorytet (1=VIP/Czerwony, 2=Żółty/Zwykły, 3=Zielony)
@@ -443,26 +211,7 @@ Pole `mtype` pełni podwójną rolę:
 
 Wszystkie kolejki są tworzone w procesie `main` za pomocą funkcji pomocniczej:
 
-[msg_creat: main.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/main.c#L196-L206)
-
-```c
-// main.c - tworzenie kolejek
-int msg_creat(int index, int klucz) {
-    int id = msgget(ftok(FILE_KEY, klucz), IPC_CREAT | 0600);
-    msgs_ids[index] = id;
-    return id;
-}
-
-// Wywołania w main():
-msg_creat(0, ID_KOLEJKA_REJESTRACJA);  // 'R'
-msg_creat(1, ID_KOLEJKA_POZ);          // 'P'
-msg_creat(2, ID_KOL_KARDIOLOG);        // 'K'
-msg_creat(3, ID_KOL_NEUROLOG);         // 'N'
-msg_creat(4, ID_KOL_LARYNGOLOG);       // 'L'
-msg_creat(5, ID_KOL_CHIRURG);          // 'C'
-msg_creat(6, ID_KOL_OKULISTA);         // 'O'
-msg_creat(7, ID_KOL_PEDIATRA);         // 'D'
-```
+[msg_creat: main.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/main.c#L146-L150)
 
 #### D.3. Przepływ komunikatów i cykl priorytetów
 
@@ -474,69 +223,31 @@ PACJENT -> REJESTRACJA -> PACJENT -> POZ -> PACJENT -> SPECJALISTA -> PACJENT
 
 Na każdym etapie `mtype` jest odpowiednio modyfikowany. Dorosły pacjent wykonuje operacje IPC samodzielnie za pomocą funkcji `wykonaj_ipc_samodzielnie()`, natomiast dziecko deleguje je do wątku opiekuna (szczegóły w późniejszej sekcji):
 
-```c
-// pacjent.c - uniwersalna funkcja IPC dla dorosłych pacjentów
-void wykonaj_ipc_samodzielnie(int qid, int limit_id, KomunikatPacjenta *msg) {
-    lock_limit(limit_id);
-    while (msgsnd(qid, msg, sizeof(KomunikatPacjenta)-sizeof(long), 0) == -1) if(errno!=EINTR) break;   
-    while (msgrcv(qid, msg, sizeof(KomunikatPacjenta)-sizeof(long), msg->pacjent_pid, 0) == -1) if(errno!=EINTR) break;
-    unlock_limit(limit_id);
-}
-```
+[funkcja wykonaj_ipc_samodzielnie: pacjent.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/pacjent.c#L84-L90)
 
-Funkcja ta opakowuje pełen cykl komunikacji: zajęcie semafora limitującego, wysłanie wiadomości, oczekiwanie na odpowiedź adresowaną po PID, zwolnienie semafora. Dzięki temu logika IPC jest zunifikowana i nie powtarza się w kodzie dla każdego etapu wizyty.
 
-```c
-// pacjent.c - sekwencja komunikacji dorosłego pacjenta
-msg.mtype = vip ? TYP_VIP : TYP_ZWYKLY;  // 1 lub 2
-wykonaj_ipc_samodzielnie(rej_msgid, SLIMIT_REJESTRACJA, &msg);
 
-msg.mtype = 1;  // POZ nie rozróżnia priorytetów
-wykonaj_ipc_samodzielnie(poz_id, SLIMIT_POZ, &msg);
+Funkcja ta opakowuje pełen cykl komunikacji: zajęcie semafora limitującego, wysłanie wiadomości, oczekiwanie na odpowiedź adresowaną po PID, zwolnienie semafora. 
 
-if (msg.typ_lekarza > 0) {
-    int spec_id = msg.typ_lekarza;
-    int qid = msgget(ftok(FILE_KEY, (spec_id==1?'K':spec_id==2?'N':spec_id==3?'L':
-                                     spec_id==4?'C':spec_id==5?'O':'D')), 0);
-    msg.mtype = msg.kolor;  // 1=czerwony (najwyższy), 2=żółty, 3=zielony
-    wykonaj_ipc_samodzielnie(qid, spec_id + 1, &msg);
-}
-```
+[przyklad wykonania: pacjent.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/pacjent.c#L208-L225)
+
 
 #### D.4. Odbiór z priorytetem (msgrcv z ujemnym mtype)
 
 Lekarze specjaliści odbierają wiadomości z priorytetem dla pilniejszych przypadków:
 
-[przykład dla lekarza specjalisty: lekarz.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/lekarz.c#L87-L89)
+[przykład dla lekarza specjalisty: lekarz.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/lekarz.c#L186-L189)
 
-```c
-// lekarz.c - odbiór przez specjalistę
-if(msgrcv(msgid, &pacjent, sizeof(pacjent) - sizeof(long), -3, IPC_NOWAIT) == -1) {
-    // ...
-}
-```
+
 
 Wartość `-3` oznacza: "odbierz wiadomość o typie <= 3, wybierając najpierw tę z najmniejszym typem". Skutkuje to obsługą w kolejności: Czerwony (1) → Żółty (2) → Zielony (3).
 
 #### D.5. Limitowanie kolejek (semafory SLIMIT)
 
 Aby zapobiec przepełnieniu systemowych buforów kolejek komunikatów, wprowadzono mechanizm ograniczania producenta:
+[2 funkcje dla pacjenta: pacjent.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/pacjent.c#L75-L82)
 
-```c
-// pacjent.c - funkcje limitujące
-void lock_limit(int sem_indeks) {
-    struct sembuf operacja = {sem_indeks, -1, SEM_UNDO};
-    while (semop(semid_limits, &operacja, 1) == -1) { 
-        if(errno == EINTR) continue; 
-        break; 
-    }
-}
 
-void unlock_limit(int sem_indeks) {
-    struct sembuf operacja = {sem_indeks, 1, SEM_UNDO};
-    semop(semid_limits, &operacja, 1);
-}
-```
 
 Semafor jest zwalniany dopiero po odebraniu odpowiedzi od lekarza, co gwarantuje, że w każdej kolejce nigdy nie będzie więcej niż `INT_LIMIT_KOLEJEK`  oczekujących komunikatów.
 
@@ -548,117 +259,16 @@ Semafor jest zwalniany dopiero po odebraniu odpowiedzi od lekarza, co gwarantuje
 
 Typ lekarza jest przekazywany jako argument przy uruchomieniu procesu:
 
-[uruchamianie lekarzy](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/main.c#L227-L232)
+[uruchamianie lekarzy](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/main.c#L222-L227)
 
-```c
-// main.c - uruchamianie lekarzy
-pid_poz = uruchom_proces("./lekarz", "SOR_POZ", "0");  // POZ
-for(int i=1; i<=6; i++) {
-    char buff[5]; sprintf(buff, "%d", i); 
-    pid_lekarze[i] = uruchom_proces("./lekarz", nazwy_lek[i], buff);
-}
-
-// lekarz.c - odczyt typu
-typ_lekarza = atoi(argv[1]);
-
-if (typ_lekarza == 0) praca_poz(msgid_poz);
-else {
-    int symbol = (typ_lekarza==1?'K':typ_lekarza==2?'N':typ_lekarza==3?'L':
-                  typ_lekarza==4?'C':typ_lekarza==5?'O':'D');
-    int mid = msgget(ftok(FILE_KEY, symbol), 0);
-    praca_specjalista(typ_lekarza, mid);
-}
-```
 
 
 #### E.2. Praca lekarza POZ (Triaż)
 
 Lekarz POZ przypisuje pacjentowi kolor triażu i kieruje do odpowiedniego specjalisty. Analogicznie do rejestracji, POZ posiada mechanizm weryfikacji istnienia pacjenta oraz dynamiczny bufor przepełnienia:
 
-[pętla główna lekarz POZ: lekarz.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/lekarz.c#L25-L54)
-```c
-// lekarz.c - inicjalizacja bufora w praca_poz()
-struct msqid_ds stan_kolejki;
-pobierz_stan_kolejki(msgid_poz, &stan_kolejki);
-size_t rozmiar_msg = sizeof(KomunikatPacjenta) - sizeof(long);
-int max_msg_limit = stan_kolejki.msg_qbytes / rozmiar_msg;
+[pętla główna lekarz POZ: lekarz.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/lekarz.c#L54-L119)
 
-KomunikatPacjenta *bufor = (KomunikatPacjenta*)malloc(max_msg_limit * sizeof(KomunikatPacjenta));
-int bufor_licznik = 0;
-int bufor_pojemnosc = max_msg_limit;
-```
-
-```c
-// lekarz.c - funkcja praca_poz() - główna pętla
-while(!koniec_pracy)
-{
-    // Opróżnianie bufora gdy kolejka ma wolne miejsce
-    if (bufor_licznik > 0) {
-        pobierz_stan_kolejki(msgid_poz, &stan_kolejki);
-        if (stan_kolejki.msg_qnum < max_msg_limit) {
-            for (int i = 0; i < bufor_licznik; i++) {
-                if (msgsnd(msgid_poz, &bufor[i], rozmiar_msg, IPC_NOWAIT) != -1) {
-                    zapisz_raport(KONSOLA, semid, "[POZ] Wznowiono pacjenta z bufora: %d\n", bufor[i].pacjent_pid);
-                    for(int j=i; j<bufor_licznik-1; j++) bufor[j] = bufor[j+1];
-                    bufor_licznik--;
-                    i--;
-                } else {
-                    if (errno == EAGAIN) break; 
-                }
-            }
-        }
-    }
-
-    if(msgrcv(msgid_poz, &pacjent, rozmiar_msg, -1, IPC_NOWAIT) == -1) 
-    {
-        if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; } 
-        break;
-    } 
-    
-    // Losowanie koloru zgodnie z rozkładem statystycznym
-    int r = rand() % 1000;
-    if (r < 100) pacjent.kolor = CZERWONY;       // 10%
-    else if (r < 450) pacjent.kolor = ZOLTY;     // 35%
-    else if (r < 950) pacjent.kolor = ZIELONY;   // 50%
-    else {
-        // 5% - odesłanie do domu
-        pacjent.typ_lekarza = 0;
-        pacjent.skierowanie = 1;
-        pacjent.kolor = 0;
-    }
-
-    // Przypisanie specjalisty
-    if (pacjent.kolor) {
-        if (pacjent.wiek < 18) pacjent.typ_lekarza = LEK_PEDIATRA;  // Dzieci do pediatry
-        else pacjent.typ_lekarza = (rand() % 5) + 1;  // Dorośli losowo 1-5
-    }
-
-    pacjent.mtype = pacjent.pacjent_pid;
-    if(koniec_pracy) break;
-
-    // Weryfikacja czy pacjent nadal żyje
-    if (kill(pacjent.pacjent_pid, 0) == -1 && errno == ESRCH) {
-        zapisz_raport(KONSOLA, semid, "[ POZ ] Brak informacji o pacjencie %d (exit), Anuluje wysylanie wiadomosci\n", 
-                     pacjent.pacjent_pid);
-        continue;
-    }
-
-    // Wysyłanie z IPC_NOWAIT - przy pełnej kolejce pacjent trafia do bufora
-    if (msgsnd(msgid_poz, &pacjent, rozmiar_msg, IPC_NOWAIT) == -1) {
-        if (errno == EAGAIN) {
-            if (bufor_licznik < bufor_pojemnosc) {
-                bufor[bufor_licznik++] = pacjent;
-                zapisz_raport(KONSOLA, semid, "[POZ] KOLEJKA PELNA! Pacjent %d -> BUFOR (%d/%d)\n", 
-                             pacjent.pacjent_pid, bufor_licznik, bufor_pojemnosc);
-            } else {
-                zapisz_raport(KONSOLA, semid, "[POZ] CRITICAL: Bufor przepelniony. Pacjent %d porzucony.\n", 
-                             pacjent.pacjent_pid);
-            }
-        }
-    }
-}
-free(bufor);
-```
 
 **Własna interpretacja:** Przy odesłaniu pacjenta przez POZ do domu nadajemy kolor 0 - niezdefiniowany. Uznaję tym samym, że pacjent kończy tutaj swoje badania i zwyczajnie
 w jego przypadku priorytet jest nieistotny (zdrowy).
@@ -668,88 +278,9 @@ w jego przypadku priorytet jest nieistotny (zdrowy).
 
 Specjalista podejmuje końcową decyzję o dalszym postępowaniu. Identycznie jak POZ i rejestracja, specjalista posiada mechanizm weryfikacji istnienia pacjenta (`kill(pid, 0)`) oraz dynamiczny bufor przepełnienia:
 
-[pętla główna lekarza specjalisty: lekarz.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/lekarz.c#L66-L101)
+[pętla główna lekarza specjalisty: lekarz.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/lekarz.c#L146-L216)
 
-```c
-// lekarz.c - funkcja praca_specjalista() z buforem i weryfikacją
-void praca_specjalista(int typ, int msgid)
-{
-    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
-    // ...
-    
-    // Inicjalizacja bufora na podstawie pojemności kolejki
-    struct msqid_ds stan_kolejki;
-    pobierz_stan_kolejki(msgid, &stan_kolejki);
-    size_t rozmiar_msg = sizeof(KomunikatPacjenta) - sizeof(long);
-    int max_msg_limit = stan_kolejki.msg_qbytes / rozmiar_msg;
-    
-    KomunikatPacjenta *bufor = (KomunikatPacjenta*)malloc(max_msg_limit * sizeof(KomunikatPacjenta));
-    int bufor_licznik = 0;
-    int bufor_pojemnosc = max_msg_limit;
 
-    while(!koniec_pracy)
-    {
-        // Obsługa wezwania na oddział (szczegóły w sekcji F)
-        if(wezwanie_na_oddzial) { /* ... */ }
-
-        // Opróżnianie bufora gdy kolejka ma wolne miejsce
-        if (bufor_licznik > 0) {
-            pobierz_stan_kolejki(msgid, &stan_kolejki);
-            if (stan_kolejki.msg_qnum < max_msg_limit) {
-                for (int i = 0; i < bufor_licznik; i++) {
-                    if (msgsnd(msgid, &bufor[i], rozmiar_msg, IPC_NOWAIT) != -1) {
-                        zapisz_raport(KONSOLA, semid, "[%s] Wznowiono z bufora: %d\n", 
-                                     int_to_lekarz(typ), bufor[i].pacjent_pid);
-                        for(int j=i; j<bufor_licznik-1; j++) bufor[j] = bufor[j+1];
-                        bufor_licznik--;
-                        i--;
-                    } else {
-                        if (errno == EAGAIN) break;
-                    }
-                }
-            }
-        }
-
-        // Odbiór pacjenta z priorytetem
-        if(msgrcv(msgid, &pacjent, rozmiar_msg, -3, IPC_NOWAIT) == -1) {
-            if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; }
-            break;            
-        }
-
-        // Decyzja końcowa zgodnie z rozkładem
-        int r = rand() % 1000;
-        if (r < 850) pacjent.skierowanie = 1;       // 85% - do domu
-        else if (r < 995) pacjent.skierowanie = 2;  // 14.5% - na oddział
-        else pacjent.skierowanie = 3;               // 0.5% - inna placówka
-
-        pacjent.mtype = pacjent.pacjent_pid;
-
-        // Weryfikacja czy pacjent nadal żyje
-        if (kill(pacjent.pacjent_pid, 0) == -1 && errno == ESRCH) {
-            zapisz_raport(KONSOLA, semid, "[ %s ] Brak informacji o pacjencie %d. Anuluje wiadomość zwrotną\n", 
-                         int_to_lekarz(typ), pacjent.pacjent_pid);
-            continue;
-        }
-
-        // Wysyłanie z IPC_NOWAIT - przy pełnej kolejce pacjent trafia do bufora
-        if (msgsnd(msgid, &pacjent, rozmiar_msg, IPC_NOWAIT) == -1) {
-             if (errno == EAGAIN) {
-                if (bufor_licznik < bufor_pojemnosc) {
-                    bufor[bufor_licznik++] = pacjent;
-                    zapisz_raport(KONSOLA, semid, "[%s] KOLEJKA PELNA! Pacjent %d -> BUFOR (%d/%d)\n", 
-                                 int_to_lekarz(typ), pacjent.pacjent_pid, bufor_licznik, bufor_pojemnosc);
-                } else {
-                    zapisz_raport(KONSOLA, semid, "[%s] CRITICAL: Bufor przepelniony. Pacjent %d porzucony.\n", 
-                                 int_to_lekarz(typ), pacjent.pacjent_pid);
-                }
-            }
-        }
-    }
-    
-    free(bufor);
-    shmdt(stan);
-}
-```
 
 **Podsumowanie mechanizmów bezpieczeństwa w procesach SOR (rejestracja, POZ, specjaliści):**
 
@@ -768,24 +299,8 @@ Wszystkie trzy typy procesów obsługujących pacjentów implementują identyczn
 ### F. Obsługa sygnałów: Wezwanie lekarza na oddział (SIGUSR2)
 
 #### F.1. Konfiguracja handlera w procesie lekarza
+[handler: lekarz.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/lekarz.c#L9-L16)
 
-```c
-// lekarz.c - handler i konfiguracja
-volatile sig_atomic_t wezwanie_na_oddzial = 0;
-
-void handle_sig(int sig)
-{
-    if(sig == SIG_LEKARZ_ODDZIAL) wezwanie_na_oddzial = 1;
-    else if(sig == SIGINT || sig == SIGTERM) koniec_pracy = 1;
-}
-
-// W main():
-struct sigaction sa;
-sa.sa_handler = handle_sig;
-sigemptyset(&sa.sa_mask);
-sa.sa_flags = 0;
-sigaction(SIG_LEKARZ_ODDZIAL, &sa, NULL);  // SIGUSR2
-```
 
 Handler jedynie ustawia flagę – właściwa logika wykonuje się w pętli głównej.
 Każda nazwa procesu specjalisty rozpoczyna się od `SOR_S_*Nazwa_specjalisty*` - jest to pomocne przy egzekwowaniu sygnału z konsoli.
@@ -793,65 +308,25 @@ Każda nazwa procesu specjalisty rozpoczyna się od `SOR_S_*Nazwa_specjalisty*` 
 
 #### F.2. Logika opuszczenia SOR przez lekarza
 
-```c
-// lekarz.c - obsługa w pętli praca_specjalista()
-if(wezwanie_na_oddzial) {
-    // Wejście do sekcji krytycznej
-    while(semop(semid, &lock, 1) == -1) { if(errno!=EINTR) break; }
-    stan->dostepni_specjalisci[typ] = 0;  // Oznaczenie jako niedostępny
-    while(semop(semid, &unlock, 1) == -1) { if(errno!=EINTR) break; }
-    
-    zapisz_raport(KONSOLA, semid, "[%s] Wezwanie na oddzial\n", int_to_lekarz(typ));
-    
-    // Symulacja pobytu na oddziale
-    sleep(10);
+[SIGUSR2 - wezwanie na oddzial: lekarz.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/lekarz.c#L148-L167)
 
-    // Powrót do pracy
-    while(semop(semid, &lock, 1) == -1) { if(errno!=EINTR) break; }
-    stan->dostepni_specjalisci[typ] = 1;  // Ponowna dostępność
-    while(semop(semid, &unlock, 1) == -1) { if(errno!=EINTR) break; }
-    
-    wezwanie_na_oddzial = 0;
-}
-```
+
 
 Możemy na bieżąco monitorować dyżurujących specjalistów w  *spec_na_oddziale.txt*
 
-[logika wezwanie na oddział](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/lekarz.c#L68-L85)
+[logika wezwanie na oddział](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/lekarz.c#L148-L167)
 
 #### F.3. Proces Dyrektora (opcjonalny)
 
 Dyrektor jest uruchamiany gdy program `main` otrzyma argument `auto`:
 
-```c
-// main.c - proces dyrektora
-if (argc > 1 && strcmp(argv[1], "auto") == 0) {
-    pid_dyrektor = fork();
-    if (pid_dyrektor == 0) {
-        sleep(1);
-        signal(SIGINT, SIG_IGN);   // Ignorowanie SIGINT
-        signal(SIGTERM, SIG_IGN);  // Ignorowanie SIGTERM
-        
-        StanSOR *stan_child = (StanSOR*)shmat(shmid, NULL, 0);
-        srand(time(NULL) ^ getpid());
-        
-        while(stan_child->symulacja_trwa) {
-            int lek = (rand() % 6) + 1;  // Losowy specjalista 1-6
-            if (stan_child->dostepni_specjalisci[lek]) {
-                if (pid_lekarze[lek] > 0) 
-                    kill(pid_lekarze[lek], SIG_LEKARZ_ODDZIAL);
-            }
-            sleep(rand() % 5 + 2);  // 2-6 sekund przerwy
-        }
-        exit(0);
-    }
-}
-```
+[PROCES dyrektora: main.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/main.c#L236-L253)
+
 **Przy uruchamianiu wpisz w konsoli:** *./main auto*
 
 Dyrektor ignoruje sygnały zakończenia, ponieważ sam musi być aktywnie zabity przez `main` podczas procedury ewakuacji (`SIGKILL`).
 
-[proces dyrektora](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/main.c#L234-L254)
+
 
 ---
 
@@ -859,7 +334,7 @@ Dyrektor ignoruje sygnały zakończenia, ponieważ sam musi być aktywnie zabity
 
 #### G.1. Handler w procesie main
 
-[handler w main](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/main.c#L185-L190)
+[handler w main]()
 
 ```c
 // main.c - handler i flaga
@@ -880,102 +355,24 @@ signal(SIGTERM, SIG_IGN);  // Main ignoruje SIGTERM
 
 #### G.2. Funkcja przeprowadz_ewakuacje()
 
-[przeprowadz ewakuacje](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/main.c#L169-L181)
+[przeprowadz ewakuacje](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/main.c#L164-L176)
 
-```c
-// main.c - procedura ewakuacji
-void przeprowadz_ewakuacje() {
-    printf("\n=== ROZPOCZYNAM EWAKUACJE SOR ===\n");
-    
-    // Wysłanie SIGTERM do personelu medycznego
-    if (pid_rejestracja_1 > 0) kill(pid_rejestracja_1, SIGTERM);
-    if (pid_poz > 0) kill(pid_poz, SIGTERM);
-    for(int i=1; i<=6; i++) 
-        if(pid_lekarze[i] > 0) kill(pid_lekarze[i], SIGTERM);
-    
-    usleep(10000);  // Krótka pauza na obsługę sygnałów
-    
-    // Wysłanie SIGINT do generatora (uruchomi procedurę ewakuacji pacjentów)
-    if (pid_gen > 0) {
-        kill(pid_gen, SIGINT);
-        waitpid(pid_gen, NULL, 0);  // Czekanie na zakończenie generatora
-    }
-    
-    // Zabicie dyrektora (ignoruje sygnały, więc SIGKILL)
-    if (pid_dyrektor > 0) kill(pid_dyrektor, SIGKILL);
-    
-    // Czekanie na wszystkie procesy potomne
-    while(wait(NULL) > 0);
-}
-```
+
 
 #### G.3. Procedura ewakuacji w generatorze
 
 Generator po otrzymaniu SIGINT wykonuje procedurę:
 
-[ewakuacja generator](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/generuj.c#L24-L63)
+[ewakuacja generator](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/generuj.c#L24-L63)
 
-```c
-// generuj.c - procedura_ewakuacji()
-void procedura_ewakuacji() {
-    signal(SIGINT, SIG_IGN); 
-    signal(SIGTERM, SIG_IGN); 
 
-    printf("\n[GENERATOR] EWAKUACJA: Blokuje dostep do SHM i robie Snapshot...\n");
-
-    // Zablokowanie dostępu do pamięci dzielonej
-    struct sembuf lock = {SEM_DOSTEP_PAMIEC, -1, SEM_UNDO};
-    struct sembuf unlock = {SEM_DOSTEP_PAMIEC, 1, SEM_UNDO};
-    semop(semid, &lock, 1);
-
-    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
-    if (stan != (void*)-1) {
-        // Snapshot stanu przed ewakuacją
-        stan->snap_w_srodku = stan->pacjenci_w_poczekalni;
-        stan->snap_przed_sor = stan->pacjenci_przed_sor;
-        
-        printf("[GENERATOR] Snapshot: W srodku=%d, Przed SOR=%d\n", 
-               stan->snap_w_srodku, stan->snap_przed_sor);
-
-        // Wysłanie SIGTERM do wszystkich procesów w grupie
-        printf("[GENERATOR] Zabijam pacjentow (SIGTERM)...\n");
-        kill(0, SIGTERM);
-
-        shmdt(stan);
-    }
-    
-    semop(semid, &unlock, 1);
-
-    // Zbieranie statusów zakończenia wszystkich dzieci
-    int suma_exit_code = 0;
-    int status;
-    pid_t pid;
-    while ((pid = waitpid(-1, &status, 0)) > 0) {
-        if (WIFEXITED(status)) {
-            suma_exit_code += WEXITSTATUS(status);
-        }
-    }
-    
-    printf("\n[GENERATOR] Ewakuacja zakonczona.\n");
-    printf("[GENERATOR] Suma kodow wyjscia (kontrolna): %d\n", suma_exit_code);
-}
-```
 
 Snapshot umożliwia późniejszą weryfikację, czy liczba ewakuowanych pacjentów zgadza się z liczbą obecnych w systemie.
 
 #### G.4. Handler ewakuacji w procesie pacjenta
 
-[pacjent.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/pacjent.c#L52-L61)
+[pacjent.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/pacjent.c#L151-L156)
 
-```c
-// pacjent.c - handler
-void handle_kill(int sig) {
-    if (stan_pacjenta == STAN_W_POCZEKALNI) {
-        _exit(sem_op_miejsca);  // 1 lub 2 (z opiekunem)
-    }
-    _exit(0);
-}
-```
 
 Pacjent używa `_exit()` zamiast `exit()` aby uniknąć wykonywania procedur sprzątających, które mogłyby powodować problemy podczas ewakuacji.
 
@@ -989,39 +386,8 @@ Argumentem _exit() jest wartość sem_op_miejsca - jest to ta sama zmienna któr
 
 Zbiera statystyki z dedykowanej kolejki komunikatów:
 
-[watek statystyki: main.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/main.c#L47-L74)
+[watek statystyki: main.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/main.c#L47-L74)
 
-```c
-// main.c - wątek statystyk
-void* watek_statystyki(void* arg) {
-    StatystykaPacjenta msg;
-    while (monitor_running) {
-        if (msgrcv(msgid_stat, &msg, sizeof(StatystykaPacjenta) - sizeof(long), 
-                   0, IPC_NOWAIT) == -1) {
-            if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; }
-            break;
-        }
-        
-        pthread_mutex_lock(&stat_mutex);
-        statystyki.obs_pacjenci++;
-        if (msg.czy_vip) statystyki.ile_vip++;
-        if (msg.kolor > 0 && msg.kolor <= 3) statystyki.obs_kolory[msg.kolor]++;
-        if (msg.typ_lekarza == 0) statystyki.obs_dom_poz++;
-        else if (msg.typ_lekarza >= 1 && msg.typ_lekarza <= 6) 
-            statystyki.obs_spec[msg.typ_lekarza]++;
-        if (msg.skierowanie >= 1 && msg.skierowanie <= 3) 
-            statystyki.decyzja[msg.skierowanie]++;
-        pthread_mutex_unlock(&stat_mutex);
-    }
-    
-    // Opróżnienie kolejki po zakończeniu symulacji
-    while (msgrcv(msgid_stat, &msg, sizeof(StatystykaPacjenta) - sizeof(long), 
-                  0, IPC_NOWAIT) != -1) {
-        // ... aktualizacja statystyk ...
-    }
-    return NULL;
-}
-```
 
 Struktura `StatystykiLokalne` jest chroniona mutexem `pthread_mutex_t stat_mutex`, ponieważ może być odczytywana z głównego wątku podczas generowania raportu końcowego.
 
@@ -1029,38 +395,15 @@ Struktura `StatystykiLokalne` jest chroniona mutexem `pthread_mutex_t stat_mutex
 
 Okresowo zapisuje status dostępności specjalistów do pliku:
 
-[watek dla specjalistow: main.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/main.c#L30-L44)
+[watek dla specjalistow: main.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/main.c#L30-L44)
 
-```c
-// main.c - wątek raportu specjalistów
-void* watek_raport_specjalistow(void* arg) {
-    StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
-    if (stan == (void*)-1) return NULL;
-    
-    const char* nazwy_spec[] = {"", "Kardiolog", "Neurolog", "Laryngolog", 
-                                 "Chirurg", "Okulista", "Pediatra"};
-    
-    while(monitor_running) {
-        FILE *f = fopen(RAPORT_2, "w");
-        if (f) {
-            for(int i=1; i<=6; i++) 
-                fprintf(f, "%-12s %d\n", nazwy_spec[i], stan->dostepni_specjalisci[i]);
-            fclose(f);
-        }
-        usleep(200000);  // 200ms
-    }
-    shmdt(stan);
-    return NULL;
-}
-```
+
 
 Plik `spec_na_oddziale.txt` jest nadpisywany przy każdej iteracji (`"w"` zamiast `"a"`), co zapewnia aktualny stan.
 
 #### H.3. Zarządzanie cyklem życia wątków
 
 Wszystkie wątki są tworzone na początku i kończone na końcu symulacji:
-
-
 
 ```c
 // main.c - tworzenie wątków
@@ -1091,105 +434,21 @@ Zgodnie z wymaganiami projektu, dzieci poniżej 18 lat przychodzą na SOR pod op
 
 Synchronizacja między wątkiem dziecka a wątkiem opiekuna opiera się na dedykowanej strukturze z mutexem i zmiennymi warunkowymi:
 
-```c
-// pacjent.c - typy zadań i blok sterujący
-typedef enum {
-    BRAK_ZADAN,
-    ZADANIE_WEJDZ_SEM,     // Zajmij 1 miejsce w poczekalni (semafor)
-    ZADANIE_WYJDZ_SEM,     // Zwolnij 1 miejsce w poczekalni
-    ZADANIE_REJESTRACJA,   // Wykonaj komunikację z rejestracją
-    ZADANIE_POZ,           // Wykonaj komunikację z POZ
-    ZADANIE_SPECJALISTA,   // Wykonaj komunikację ze specjalistą
-    ZADANIE_KONIEC         // Zakończ wątek
-} TypZadania;
+[synchronizacja wątków: pacjent.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/pacjent.c#L21-L39)
 
-typedef struct {
-    pthread_mutex_t mutex;
-    pthread_cond_t cond_start;   // Opiekun czeka na nowe zadanie
-    pthread_cond_t cond_koniec;  // Dziecko czeka na zakończenie zadania
-    TypZadania aktualne_zadanie;
-    KomunikatPacjenta dane_pacjenta;  // Współdzielone dane komunikatu
-} OpiekunControlBlock;
-
-OpiekunControlBlock OpiekunSync;
-```
 
 Struktura `OpiekunControlBlock` realizuje wzorzec producent-konsument: dziecko (producent) ustawia zadanie i sygnalizuje `cond_start`, opiekun (konsument) wykonuje zadanie i sygnalizuje `cond_koniec`.
 
 #### I.2. Funkcja zlecająca zadanie opiekunowi
 
-```c
-// pacjent.c - zlecanie zadania opiekunowi
-void zlec_opiekunowi(TypZadania zadanie) {
-    pthread_mutex_lock(&OpiekunSync.mutex);
-    OpiekunSync.aktualne_zadanie = zadanie;
-    pthread_cond_signal(&OpiekunSync.cond_start);
-    while (OpiekunSync.aktualne_zadanie != BRAK_ZADAN) {
-        pthread_cond_wait(&OpiekunSync.cond_koniec, &OpiekunSync.mutex);
-    }
-    pthread_mutex_unlock(&OpiekunSync.mutex);
-}
-```
+[pacjent.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/pacjent.c#L92-L100)
+
 
 Funkcja jest blokująca – dziecko czeka (`cond_wait`) dopóki opiekun nie ustawi `aktualne_zadanie` z powrotem na `BRAK_ZADAN`, co oznacza wykonanie zlecenia.
 
 #### I.3. Funkcja wątku opiekuna
 
-[watek opiekun: pacjent.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/pacjent.c#L98-L108)
-
-```c
-// pacjent.c - pętla główna wątku opiekuna
-void* watek_opiekun(void* arg) {
-    pid_t mpid = getpid();
-    pthread_mutex_lock(&OpiekunSync.mutex);
-    while (1) {
-        while (OpiekunSync.aktualne_zadanie == BRAK_ZADAN) 
-            pthread_cond_wait(&OpiekunSync.cond_start, &OpiekunSync.mutex);
-        if (OpiekunSync.aktualne_zadanie == ZADANIE_KONIEC) break;
-
-        pthread_mutex_unlock(&OpiekunSync.mutex); 
-        
-        KomunikatPacjenta *msg = &OpiekunSync.dane_pacjenta;
-        struct sembuf operacja_sem = {SEM_MIEJSCA_SOR, 0, SEM_UNDO}; 
-        
-        switch (OpiekunSync.aktualne_zadanie) {
-            case ZADANIE_WEJDZ_SEM:
-                operacja_sem.sem_op = -1;
-                while (semop(semid, &operacja_sem, 1) == -1) if(errno!=EINTR) exit(104);
-                aktualizuj_liczniki(-1, 1, 0); 
-                break;
-            case ZADANIE_WYJDZ_SEM:
-                operacja_sem.sem_op = 1;
-                semop(semid, &operacja_sem, 1);
-                aktualizuj_liczniki(0, -1, 0);
-                break;
-            case ZADANIE_REJESTRACJA:
-                wykonaj_ipc_samodzielnie(rej_msgid, SLIMIT_REJESTRACJA, msg);
-                break;
-            case ZADANIE_POZ:
-                msg->mtype = 1;
-                wykonaj_ipc_samodzielnie(poz_id, SLIMIT_POZ, msg);
-                break;
-            case ZADANIE_SPECJALISTA:
-                if (msg->typ_lekarza > 0) {
-                    int spec_id = msg->typ_lekarza;
-                    int qid = msgget(ftok(FILE_KEY, (spec_id==1?'K':spec_id==2?'N':spec_id==3?'L':
-                                                     spec_id==4?'C':spec_id==5?'O':'D')), 0);
-                    msg->mtype = msg->kolor;
-                    wykonaj_ipc_samodzielnie(qid, spec_id + 1, msg);
-                }
-                break;
-            default: break;
-        }
-
-        pthread_mutex_lock(&OpiekunSync.mutex);
-        OpiekunSync.aktualne_zadanie = BRAK_ZADAN;
-        pthread_cond_signal(&OpiekunSync.cond_koniec);
-    }
-    pthread_mutex_unlock(&OpiekunSync.mutex);
-    return NULL;
-}
-```
+[watek opiekun: pacjent.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/pacjent.c#L102-L149)
 
 Opiekun wykorzystuje tę samą funkcję `wykonaj_ipc_samodzielnie()` co dorosły pacjent, dzięki czemu logika komunikacji IPC jest współdzielona. Kluczowa różnica polega na tym, że opiekun operuje na wskaźniku do `OpiekunSync.dane_pacjenta` – współdzielonego bufora komunikatu, przez który dziecko i opiekun wymieniają się danymi.
 
@@ -1197,26 +456,8 @@ Wątek opiekuna wykonuje operacje na semaforze z flagą `SEM_UNDO` – oznacza t
 
 #### I.4. Tworzenie wątku opiekuna i zajmowanie podwójnego miejsca
 
-```c
-// pacjent.c - inicjalizacja opiekuna dla nieletnich
-int wiek = rand() % 100;
+[inicjalizacja watku: pacjent.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/pacjent.c#L190-L203)
 
-if (wiek < 18) {
-    RODZIC_POTRZEBNY = 1;
-    sem_op_miejsca = 2;  // Dziecko + opiekun = 2 miejsca w poczekalni
-    pthread_mutex_init(&OpiekunSync.mutex, NULL);
-    pthread_cond_init(&OpiekunSync.cond_start, NULL);
-    pthread_cond_init(&OpiekunSync.cond_koniec, NULL);
-    OpiekunSync.aktualne_zadanie = BRAK_ZADAN;
-    pthread_create(&rodzic_thread, NULL, watek_opiekun, NULL);
-    
-    zapisz_raport(KONSOLA, semid, "[PACJENT %d ] WIEK %d |Z DOROSLYM %lu |\n", 
-                  mpid, wiek, (unsigned long)rodzic_thread);
-} else {
-    sem_op_miejsca = 1;
-    zapisz_raport(KONSOLA, semid, "[PACJENT  %d ] WIEK %d \n", mpid, wiek);
-}
-```
 
 Zmienna `sem_op_miejsca` przyjmuje wartość 1 dla dorosłych lub 2 dla nieletnich z opiekunem.
 
@@ -1224,64 +465,8 @@ Zmienna `sem_op_miejsca` przyjmuje wartość 1 dla dorosłych lub 2 dla nieletni
 
 Dziecko (wątek główny) zajmuje jedno miejsce w poczekalni bezpośrednio, a drugie miejsce zleca opiekunowi. Następnie każdy etap komunikacji IPC (rejestracja, POZ, specjalista) jest delegowany do opiekuna przez `zlec_opiekunowi()`:
 
-```c
-// pacjent.c - sekwencja wizyty dziecka z opiekunem
-aktualizuj_liczniki(sem_op_miejsca, 0, 0);  // +2 przed SOR
+[przykład z kodu: pacjent.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/pacjent.c#L208-L256)
 
-// Opiekun zajmuje swoje 1 miejsce
-zlec_opiekunowi(ZADANIE_WEJDZ_SEM);
-
-// Dziecko zajmuje swoje 1 miejsce
-struct sembuf wejscie = {SEM_MIEJSCA_SOR, -1, SEM_UNDO};
-while (semop(semid, &wejscie, 1) == -1) { if (errno == EINTR) continue; exit(104); }
-
-aktualizuj_liczniki(-1, 1, 1);
-stan_pacjenta = STAN_W_POCZEKALNI;
-
-// Rejestracja - delegacja do opiekuna
-OpiekunSync.dane_pacjenta = msg;
-zlec_opiekunowi(ZADANIE_REJESTRACJA);
-msg = OpiekunSync.dane_pacjenta;
-
-aktualizuj_liczniki(0, 0, -1);
-
-// POZ - delegacja do opiekuna
-OpiekunSync.dane_pacjenta = msg;
-zlec_opiekunowi(ZADANIE_POZ);
-msg = OpiekunSync.dane_pacjenta;
-
-// Specjalista - delegacja do opiekuna
-if (msg.typ_lekarza > 0) {
-    OpiekunSync.dane_pacjenta = msg;
-    zlec_opiekunowi(ZADANIE_SPECJALISTA);
-    msg = OpiekunSync.dane_pacjenta;
-}
-```
-
-Po każdym zleceniu dziecko odczytuje zaktualizowane dane z `OpiekunSync.dane_pacjenta` – opiekun mógł np. zmienić pole `kolor` (po triażu) czy `skierowanie` (po specjaliście).
-
-#### I.6. Kończenie wątku opiekuna
-
-```c
-// pacjent.c - zakończenie normalne
-if (RODZIC_POTRZEBNY) 
-{
-    // Zwolnienie miejsca opiekuna w poczekalni
-    zlec_opiekunowi(ZADANIE_WYJDZ_SEM);
-    
-    // Zakończenie wątku opiekuna
-    pthread_mutex_lock(&OpiekunSync.mutex);
-    OpiekunSync.aktualne_zadanie = ZADANIE_KONIEC;
-    pthread_cond_signal(&OpiekunSync.cond_start);
-    pthread_mutex_unlock(&OpiekunSync.mutex);
-    pthread_join(rodzic_thread, NULL);
-}
-
-// Dziecko zwalnia swoje miejsce
-struct sembuf wyjscie = {SEM_MIEJSCA_SOR, 1, SEM_UNDO};
-semop(semid, &wyjscie, 1);
-aktualizuj_liczniki(0, -1, 0);
-```
 
 Zadanie `ZADANIE_KONIEC` powoduje wyjście opiekuna z pętli głównej. `pthread_join()` czeka na faktyczne zakończenie wątku i zwalnia jego zasoby.
 
@@ -1298,64 +483,14 @@ Zadanie `ZADANIE_KONIEC` powoduje wyjście opiekuna z pętli głównej. `pthread
 #define STAN_WYCHODZI 2       // Zakończona obsługa
 ```
 
-#### J.2. Przejścia między stanami
-
-[stany pacjenta: pacjent.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/pacjent.c#L83-L119)
-
-```c
-// pacjent.c - sekwencja stanów
-stan_pacjenta = STAN_PRZED_SOR;
-
-// Aktualizacja licznika osób przed SOR
-aktualizuj_liczniki(sem_op_miejsca, 0, 0);
-
-// Oczekiwanie na miejsce w poczekalni (semafor)
-struct sembuf wejscie = {SEM_MIEJSCA_SOR, -sem_op_miejsca, SEM_UNDO};
-while (semop(semid, &wejscie, 1) == -1) { /* ... */ }
-
-// Wejście do poczekalni
-aktualizuj_liczniki(-sem_op_miejsca, sem_op_miejsca, 1);
-stan_pacjenta = STAN_W_POCZEKALNI;
-
-// ... obsługa przez rejestrację, POZ, specjalistę ...
-
-// Wyjście z SOR
-stan_pacjenta = STAN_WYCHODZI;
-aktualizuj_liczniki(0, -sem_op_miejsca, 0);
-```
-
-Stan pacjenta jest wykorzystywany w handlerze ewakuacji do określenia, jakie zasoby należy zwolnić 0 / sem_op_miejsca.
-
----
 
 ### K. Funkcje pomocnicze
 
 #### K.1. Funkcja zapisz_raport()
 
-[zapisz_raport: wspolne.h](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/wspolne.h#L132-L146)
+[zapisz_raport: wspolne.h](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/wspolne.h#L134-L148)
 
-```c
-// wspolne.h - funkcja raportująca
-static inline void zapisz_raport(const char* filename, int semid, const char* format, ...) {
-    (void)semid;  // Parametr zachowany dla kompatybilności
-    char bufor[1024]; 
-    va_list args;
-    va_start(args, format);
-    int len = vsnprintf(bufor, sizeof(bufor), format, args);
-    va_end(args);
-    if (len <= 0) return;
-    
-    if (filename == KONSOLA) {
-        write(STDOUT_FILENO, bufor, len);
-    } else {
-        int fd = open(filename, O_WRONLY | O_CREAT | O_APPEND, 0600);
-        if (fd != -1) { 
-            write(fd, bufor, len); 
-            close(fd); 
-        }
-    }
-}
-```
+
 
 Funkcja używa `write()` zamiast `printf()` / `fprintf()`, co jest bezpieczniejsze w kontekście signal-handlerów. Pierwszym argumentem funkcji jest wyjście - plik raportowy, bądź konsola, semid - pozostałość po starej implementacji.
 
@@ -1363,71 +498,26 @@ Funkcja używa `write()` zamiast `printf()` / `fprintf()`, co jest bezpieczniejs
 
 Generuje raport końcowy porównujący obserwowane statystyki z wartościami oczekiwanymi:
 
-[funkcja ostatecznego podsumowania: wspolne.h](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/wspolne.h#L148-L189)
+[funkcja ostatecznego podsumowania: wspolne.h](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/wspolne.h#L150-L194)
 
-```c
-// wspolne.h - funkcja podsumowująca
-static inline void podsumowanie(StatystykiLokalne *stat, StanSOR *stan)
-{
-    double p = (double)stat->obs_pacjenci; 
-    if (p == 0) p = 1.0; 
-    
-    int ewak_z_poczekalni = stan->snap_w_srodku;
-    int ewak_sprzed_sor = stan->snap_przed_sor;
 
-    // ... formatowanie i wyświetlanie statystyk ...
-    
-    pos += sprintf(bufor + pos, "Pacjenci VIP:    %d (oczekiwano ok.: %d)\n", 
-                   stat->ile_vip, (int)(0.2 * p + 0.5));
-    pos += sprintf(bufor + pos, "Czerwony: %d (oczekiwano ok.: %d)\n", 
-                   stat->obs_kolory[CZERWONY], (int)(0.1 * p + 0.5));
-    // ... itd. ...
-    
-    write(STDOUT_FILENO, bufor, pos);
-}
-```
 
 #### K.3. Funkcja uruchom_proces()
 
 Wrapper standaryzujący tworzenie procesów potomnych:
 
-[tworzenie procesów potomnych - funkcja pomocnicza: main.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/main.c#L157-L167)
+[tworzenie procesów potomnych - funkcja pomocnicza: main.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/main.c#L152-L162)
 
-```c
-// main.c - wrapper uruchamiania procesów
-pid_t uruchom_proces(const char* prog, const char* name, const char* arg1) {
-    pid_t pid = fork();
-    if (pid == 0) {
-        signal(SIGINT, SIG_DFL);   // Przywrócenie domyślnej obsługi
-        signal(SIGTERM, SIG_DFL);
-        if(arg1) execl(prog, name, arg1, NULL);
-        else execl(prog, name, NULL);
-        exit(1);  // Tylko jeśli execl() zawiedzie
-    }
-    return pid;
-}
-```
+
 
 Przywrócenie domyślnej obsługi sygnałów w procesie potomnym jest kluczowe, ponieważ dyspozycje sygnałów są dziedziczone po `fork()`.
 
 #### K.4. Funkcja czyszczenie()
 
-[czyszczenie: main.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/main.c#L138-L145)
 
 Zwalnia wszystkie zasoby IPC:
+[czyszczenie: main.c](https://github.com/utratav/SO_SOR/blob/c636695b4c763e3f9b6acc920a17a64fc873c2d2/main.c#L133-L140)
 
-```c
-// main.c - procedura sprzątająca
-void czyszczenie() {     
-    if (shmid != -1) shmctl(shmid, IPC_RMID, NULL);
-    if (semid != -1) semctl(semid, 0, IPC_RMID);
-    if (semid_limits != -1) semctl(semid_limits, 0, IPC_RMID);
-    for (int i = 0; i < 20; i++) 
-        if (msgs_ids[i] != -1) msgctl(msgs_ids[i], IPC_RMID, NULL);
-    if (msgid_stat != -1) msgctl(msgid_stat, IPC_RMID, NULL);
-    printf("\n[SYSTEM] Wykonano czyszczenie zasobow IPC.\n");
-}
-```
 
 Flaga `IPC_RMID` oznacza natychmiastowe usunięcie zasobu. Dla pamięci dzielonej, faktyczne zwolnienie nastąpi gdy ostatni proces odłączy się od segmentu.
 
@@ -1520,6 +610,11 @@ W tym trybie symulacja działa bez automatycznych wezwań lekarzy na oddział. W
 # Wysłanie sygnału SIGUSR2 do konkretnego lekarza (wymaga znajomości PID)
 kill -SIGUSR2 
 ```
+**Ewentualnie:**
+```bash
+# Nie wymaga znajmości PID
+pkill -SIGUSR2 -f SOR_S_*Nazwa_specjalisty*
+```
 
 #### Tryb automatyczny (z procesem dyrektora)
 
@@ -1559,7 +654,7 @@ make ipc_clean
 
 # Testy
 
-## T1: Czy Użycie semafora pred kolejką komunikatów skutecznie uniemożliwia zapchanie kolejki i w konsekwencji chroni przed deadlockiem (exit pacjenta w sekcji krytycznej)?
+## T1: Czy Użycie semafora przed kolejką komunikatów skutecznie uniemożliwia zapchanie kolejki i w konsekwencji chroni przed deadlockiem (exit pacjenta w sekcji krytycznej)?
 
 Będe używał stwierdzenia procesy SOR - chodzi mi o rejestracje, POZ, specjalistów - implementacja komunikacji pomiędzy pacjentem, a każdym procesem SOR jest taka sama.
 
