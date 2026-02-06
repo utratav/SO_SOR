@@ -1193,102 +1193,6 @@ Flaga `IPC_RMID` oznacza natychmiastowe usunięcie zasobu. Dla pamięci dzielone
 
 ---
 
-## Testy
-
-### Test 1: Dynamiczna Bramka nr 2
-
-* **Konfiguracja testowa:** MAX_PACJENTOW = 800, PACJENCI_NA_DOBE = 50000
-* **Próg otwarcia:** >= 400 osób
-* **Próg zamknięcia:** < 266 osób
-
-Analiza pliku `monitor_bramek.txt` pokazuje poprawne działanie mechanizmu monitorującego otwarcia bramek:
-
-<img width="472" height="497" alt="image" src="https://github.com/user-attachments/assets/3f58fd24-33b2-4559-921d-035a26059240" />
-
-System utrzymuje drugie okienko otwarte mimo spadku poniżej progu otwarcia 400, zamykając je dopiero po osiągnięciu dolnego progu 266.
-
-
-### Test 2: Weryfikacja statystyczna i spójność danych
-
-<img width="484" height="616" alt="image" src="https://github.com/user-attachments/assets/1d9734c8-2389-48f0-ba74-adb228401801" />
-
-**Cel testu:**  Weryfikacja poprawności synchronizacji procesów oraz spójności danych statystycznych przy dużym obciążeniu systemu (50 000 pacjentów). 
-
-* Test sprawdza, czy suma obsłużonych pacjentów zgadza się z liczbą wygenerowanych procesów (czy żaden proces nie został "zgubiony") oraz czy rozkład losowy (triaż, decyzje) mieści się w założonych granicach prawdopodobieństwa.
-
-* **Wyniki testu:** Wygenerowano pacjentów: 50 000
-
-* Obsłużono ogółem: 50 000
-  
-* Suma decyzji końcowych (Odesłani do domu + Skierowani na oddział + Do innej placówki):$42910 + 6860 + 230 = 50 000
-
-* Wniosek: Bilans pacjentów jest idealny. Żaden proces nie został utracony ani pominięty w statystykach.
-  
-* Pacjenci odesłani przez POZ do domu: 2 450
-  
-* Pacjenci skierowani do specjalistów: 50 000 - 2 450 = 47 550
-  
-* Suma pacjentów przyjętych przez specjalistów (Kardiolog...Pediatra): 7788 + 7945 + 7893 + 7836 + 7774 + 8314 = 47 550
-  
-* **Wniosek:** Przekazywanie pacjentów na linii POZ -> Specjalista działa poprawnie.
-* **Rozkład statystyczny:** Wyniki rzeczywiste są bardzo zbliżone do wartości oczekiwanych (np. Czerwony: 4946 vs oczekiwano ok. 5000). Niewielkie odchylenia są naturalnym efektem działania generatora liczb losowych (rand()) i mieszczą się w normie.
-
-### Test 3: Wezwanie na oddział wszystkich specjalistów
-
-**Cel testu:** Weryfikacja odporności systemu na sygnał SIGUSR2 (symulacja wezwania lekarza na oddział przez Dyrektora). Test ma na celu sprawdzenie sytuacji ekstremalnej, w której wszyscy specjaliści jednocześnie przerywają pracę na SOR, udają się na oddział (symulowane przez sleep), a następnie wracają do obsługi kolejki.
-
-**Metodyka:** W trakcie pełnego obciążenia systemu, w osobnej konsoli wykonano polecenie systemowe wysyłające sygnał do wszystkich procesów specjalistów jednocześnie:
-
-*pkill -SIGUSR2 -f SOR_S_*
-
-Flaga -f SOR_S_ pozwala na uchwycenie wszystkich procesów potomnych, których nazwa zaczyna się od zdefiniowanego w kodzie prefiksu (np. SOR_S_Kardiolog, SOR_S_Chirurg itd.).
-
-**Wyniki testu:**
-
-<img width="828" height="976" alt="Zrzut ekranu 2026-02-02 082026" src="https://github.com/user-attachments/assets/fd862eb6-1058-4119-864a-9e029c24b75a" />
-
-**Reakcja na sygnał:**
-
-* Procesy specjalistów poprawnie odebrały sygnał (przerwanie funkcji systemowej msgrcv z błędem EINTR).
-
-* Mechanizm obsługi błędów w pętli głównej lekarz.c zadziałał poprawnie – procesy nie zakończyły działania, lecz przeszły do procedury obsługi wezwania.
-
-**Zachowanie systemu (Pauza):**
-
-* Zaobserwowano chwilowe wstrzymanie logów od specjalistów (symulacja 10-sekundowego obchodu na oddziale).
-
-* W tym czasie procesy Rejestracja oraz POZ działały nadal, kolejkując pacjentów do momentu zapełnienia kolejek IPC.
-
-**Powrót do normalnej pracy:**
-
-* Po upływie czasu symulacji oddziału, wszyscy specjaliści wznowili pobieranie komunikatów z kolejek.
-
-* System "nadrobił" zaległości, przetwarzając nagromadzonych pacjentów.
-
-* Symulacja zakończyła się w sposób naturalny, osiągając limit pacjentów, a raport końcowy (zgodny z Testem 2) potwierdził, że żaden pacjent nie został zgubiony w trakcie tego manewru.
-
-
-### Test 4: Procedura nagłej ewakuacji (SIGINT)
-
-**Cel:** Weryfikacja poprawności mechanizmu "Snapshota" (zamrożenia stanu pamięci) oraz zgodności liczby pacjentów przy nagłym przerwaniu symulacji (Ctrl+C).
-
-**Wyniki:**
-
-<img width="466" height="752" alt="Zrzut ekranu 2026-02-02 083444" src="https://github.com/user-attachments/assets/b6cbb1d9-54e2-49ce-88a8-dd53d3122cd0" />
-
-* Stan w momencie przerwania: Generator zablokował pamięć i wykonał zrzut stanu: 800 pacjentów wewnątrz SOR oraz 118 w kolejce (łącznie 918 procesów).
-
-* Proces usuwania: Wysłano sygnał SIGTERM. Suma kodów wyjścia procesów (waitpid) wyniosła 800, co idealnie pokrywa się z liczbą pacjentów zajmujących zasoby (800 wew.). Pozostałe 118 procesów (kolejka) zwróciło 0.
-
-* Raport: Sekcja "RAPORT EWAKUACJI" wyświetliła poprawne dane (800/118), zgodne ze stanem faktycznym.
-
-* Wniosek: Mechanizm działa prawidłowo. Wyeliminowano ryzyko wyścigu (race condition), a każdy proces został poprawnie zidentyfikowany i rozliczony.
-
-* Dygresja: teoretycznie moglibyśmy zwracać wartość inną niż zero dla osob przed poczekalnią jednak musielibyśmy zadbać o to, żeby generowanie wieku pacjenta i zapis do pamięci dzielonej o pobycie przed poczekalnia odbywały się jak najszybciej.
-  Przyznanie wieku mogłoby się odbywać z poziomu fork() i exec() w generatorze - przekazywalibyśmy wiek jako argument (przy odpowiedniej konwersji na stringa) oraz przypisywali atoi(argv[1]) do wieku. Jednak co z pacjentami, którzy nie uaktualnili StanSOR - przed_poczekalnia++.
-  Użycie semctl z GETNCNT również nie rozwiąże problemu, gdyż ten traktuje rodzica z dzieckiem jako pojedynczy proces. To samo się tyczy logiki semctl i GETVAL na semaforze generatora w połączeniu z GETVAL semafora poczekalni - znowu różnica zwróci nam jedynie liczbę procesów
-  (bez rozróżnienia na dorosły / dziecko z opiekunem)
-
 
 
   ## Kompilacja i uruchomienie
@@ -1367,9 +1271,11 @@ make clean
 make ipc_clean
 ```
 
+---
 
+# Testy
 
-## T1: Czy Użycie semafora pred kolejką komunikatów skutecznie uniemożliwia zapchanie kolejki i w konsekwencji chroni przed deadlockiem?
+## T1: Czy Użycie semafora pred kolejką komunikatów skutecznie uniemożliwia zapchanie kolejki i w konsekwencji chroni przed deadlockiem (exit pacjenta w sekcji krytycznej)?
 
 Będe używał stwierdzenia procesy SOR - chodzi mi o rejestracje, POZ, specjalistów - implementacja komunikacji pomiędzy pacjentem, a każdym procesem SOR jest taka sama.
 
@@ -1526,11 +1432,61 @@ Np. "-1" - msgrcv weźmie najmniejszą liczbę mniejszą niż | -1 |.
 
 
 
+## T4: Czy pacjenci VIP, z kolerem Czerownym zostaną obsłużeni szybciej od reszty?
+
+typ vip = 1, typ zwykly = 0;      typ czerwony = 1, typ zółty = 2, typ zielony = 3;
+
+**Modyfikacje:**
+
+* Po każdej etapie komunikacji pacjent robi sleep(3);
+* logujemy w pliku priorytety.txt
+
+**Wyniki:**
+<img width="374" height="885" alt="Zrzut ekranu 2026-02-05 230512" src="https://github.com/user-attachments/assets/8d420d39-2cf7-4aa1-9e89-57f8d950fc5c" />
+
+Zgodnie z założeniami Pacjenci o niższej wartości mtype (wyższym priorytecie) zostali obsłużeni szybciej
 
 
 
 
 
+## T5: Dynamiczna Bramka nr 2
+
+* **Konfiguracja testowa:** MAX_PACJENTOW = 800, PACJENCI_NA_DOBE = 50000
+* **Próg otwarcia:** >= 400 osób
+* **Próg zamknięcia:** < 266 osób
+
+Analiza pliku `monitor_bramek.txt` pokazuje poprawne działanie mechanizmu monitorującego otwarcia bramek:
+
+<img width="472" height="497" alt="image" src="https://github.com/user-attachments/assets/3f58fd24-33b2-4559-921d-035a26059240" />
+
+System utrzymuje drugie okienko otwarte mimo spadku poniżej progu otwarcia 400, zamykając je dopiero po osiągnięciu dolnego progu 266.
+
+
+
+
+
+
+## T6: Procedura nagłej ewakuacji (SIGINT)
+
+**Cel:** Weryfikacja poprawności mechanizmu "Snapshota" (zamrożenia stanu pamięci) oraz zgodności liczby pacjentów przy nagłym przerwaniu symulacji (Ctrl+C).
+
+**Wyniki:**
+
+<img width="466" height="752" alt="Zrzut ekranu 2026-02-02 083444" src="https://github.com/user-attachments/assets/b6cbb1d9-54e2-49ce-88a8-dd53d3122cd0" />
+
+* Stan w momencie przerwania: Generator zablokował pamięć i wykonał zrzut stanu: 800 pacjentów wewnątrz SOR oraz 118 w kolejce (łącznie 918 procesów).
+
+* Proces usuwania: Wysłano sygnał SIGTERM. Suma kodów wyjścia procesów (waitpid) wyniosła 800, co idealnie pokrywa się z liczbą pacjentów zajmujących zasoby (800 wew.). Pozostałe 118 procesów (kolejka) zwróciło 0.
+
+* Raport: Sekcja "RAPORT EWAKUACJI" wyświetliła poprawne dane (800/118), zgodne ze stanem faktycznym.
+
+* Wniosek: Mechanizm działa prawidłowo. Wyeliminowano ryzyko wyścigu (race condition), a każdy proces został poprawnie zidentyfikowany i rozliczony.
+
+* Dygresja: teoretycznie moglibyśmy zwracać wartość inną niż zero dla osob przed poczekalnią jednak musielibyśmy zadbać o to, żeby generowanie wieku pacjenta i zapis do pamięci dzielonej o pobycie przed poczekalnia odbywały się jak najszybciej.
+  Przyznanie wieku mogłoby się odbywać z poziomu fork() i exec() w generatorze - przekazywalibyśmy wiek jako argument (przy odpowiedniej konwersji na stringa) oraz przypisywali atoi(argv[1]) do wieku. Jednak co z pacjentami, którzy nie uaktualnili StanSOR - przed_poczekalnia++.
+  Użycie semctl z GETNCNT również nie rozwiąże problemu, gdyż ten traktuje rodzica z dzieckiem jako pojedynczy proces. To samo się tyczy logiki semctl i GETVAL na semaforze generatora w połączeniu z GETVAL semafora poczekalni - znowu różnica zwróci nam jedynie liczbę procesów
+  (bez rozróżnienia na dorosły / dziecko z opiekunem)
 
 
 
