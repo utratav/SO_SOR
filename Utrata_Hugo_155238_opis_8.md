@@ -248,20 +248,18 @@ Proces pacjenta przy wejściu do poczekalni sprawdza długość kolejki i ustawi
 
 ```c
 // pacjent.c - fragment aktualizuj_liczniki()
-int obecna_kolejka = stan->dlugosc_kolejki_rejestracji;
-int obecny_rozkaz = stan->wymuszenie_otwarcia;
+int q = stan->dlugosc_kolejki_rejestracji;
+int cmd = stan->wymuszenie_otwarcia;
 
-if (obecna_kolejka >= PROG_OTWARCIA && obecny_rozkaz == 0) 
+if (q > PROG_OTWARCIA && cmd == 0) 
 {
     stan->wymuszenie_otwarcia = 1;
-    zapisz_raport(RAPORT_1, semid, "[PACJENT] Zlecam OTWARCIE (Kolejka: %d >= %d)\n", 
-                  obecna_kolejka, PROG_OTWARCIA);
+    zapisz_raport(RAPORT_1, semid, "[ Pacjent ] wymuszam otwarcie bramki numer 2\n");
 }
-else if (obecna_kolejka < PROG_ZAMKNIECIA && obecny_rozkaz == 1) 
+else if (q < PROG_ZAMKNIECIA && cmd == 1) 
 {
     stan->wymuszenie_otwarcia = 0;
-    zapisz_raport(RAPORT_1, semid, "[PACJENT] Zlecam ZAMKNIECIE (Kolejka: %d < %d)\n", 
-                  obecna_kolejka, PROG_ZAMKNIECIA);
+    zapisz_raport(RAPORT_1, semid, "[ Pacjent ] wymuszam zamkniecie bramki numer 2\n");
 }
 ```
 
@@ -334,34 +332,82 @@ Wątek utrzymuje lokalny stan `local_okienko_otwarte`, który jest synchronizowa
 
 #### C.4. Proces rejestracji
 
-Proces rejestracji (`rejestracja.c`) jest prosty – w pętli odbiera komunikaty od pacjentów i odsyła je z powrotem (z ustawionym `mtype` na PID pacjenta):
+Proces rejestracji (`rejestracja.c`) w pętli odbiera komunikaty od pacjentów i odsyła je z powrotem (z ustawionym `mtype` na PID pacjenta). Zawiera trzy istotne mechanizmy bezpieczeństwa:
+
+1. **Weryfikacja istnienia pacjenta** – przed wysłaniem odpowiedzi, rejestracja sprawdza za pomocą `kill(pid, 0)` czy proces pacjenta nadal żyje. Jeśli pacjent zakończył działanie (np. przez `SEM_UNDO` po sygnale), wiadomość jest anulowana zamiast zapychać kolejkę martwymi odpowiedziami.
+
+2. **Dynamiczny bufor przepełnienia** – wysyłanie odpowiedzi odbywa się z flagą `IPC_NOWAIT`. Gdy kolejka jest pełna (`EAGAIN`), zamiast blokowania, pacjent trafia do dynamicznego bufora w pamięci procesu. Bufor jest alokowany na starcie na podstawie rzeczywistej pojemności kolejki systemowej (`msg_qbytes / sizeof_msg`).
+
+3. **Opróżnianie bufora** – na początku każdej iteracji pętli, jeśli bufor zawiera oczekujące wiadomości, rejestracja sprawdza stan kolejki przez `msgctl(IPC_STAT)` i próbuje odesłać zbuforowane komunikaty dopóki kolejka ma wolne miejsce.
 
 [główna pętla rejestracji: rejestracja.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/rejestracja.c#L29-L48)
 
 ```c
-// rejestracja.c - główna pętla
+// rejestracja.c - inicjalizacja bufora
+struct msqid_ds stan_kolejki;
+pobierz_stan_kolejki(msgid_we, &stan_kolejki);
+size_t rozmiar_pojedynczej_wiadomosci = sizeof(KomunikatPacjenta) - sizeof(long);
+int max_msg_limit = stan_kolejki.msg_qbytes / rozmiar_pojedynczej_wiadomosci;
+
+bufor_pojemnosc = max_msg_limit; 
+bufor_oczekujacych = (KomunikatPacjenta*)malloc(bufor_pojemnosc * sizeof(KomunikatPacjenta));
+```
+
+```c
+// rejestracja.c - główna pętla z buforem i weryfikacją pacjenta
 while(!koniec_pracy)
 {
-    ssize_t status = msgrcv(msgid_we, &pacjent, sizeof(pacjent) - sizeof(long), 
-                            -2, IPC_NOWAIT);
+    pobierz_stan_kolejki(msgid_we, &stan_kolejki);
 
-    if (status == -1) {
-        if (errno == ENOMSG || errno == EINTR) {
-            usleep(50000);
-            continue;
+    // Opróżnianie bufora gdy kolejka ma wolne miejsce
+    if (bufor_licznik > 0) {
+        if (stan_kolejki.msg_qnum < max_msg_limit) { 
+            for (int i = 0; i < bufor_licznik; i++) {
+                if (msgsnd(msgid_we, &bufor_oczekujacych[i], rozmiar_pojedynczej_wiadomosci, IPC_NOWAIT) != -1) {
+                    zapisz_raport(KONSOLA, semid, "[ Rejestracja %d ] Wznowiono z bufora: %d\n", 
+                                 nr_okienka, bufor_oczekujacych[i].pacjent_pid);
+                    for(int j=i; j<bufor_licznik-1; j++) bufor_oczekujacych[j] = bufor_oczekujacych[j+1];
+                    bufor_licznik--;
+                    i--; 
+                } else {
+                    if (errno == EAGAIN) break; 
+                }
+            }
         }
+    }
+
+    ssize_t status = msgrcv(msgid_we, &pacjent, rozmiar_pojedynczej_wiadomosci, -2, IPC_NOWAIT);
+    if (status == -1) {
+        if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; }
         break;
     }
 
     pacjent.mtype = pacjent.pacjent_pid; 
-    if(msgsnd(msgid_we, &pacjent, sizeof(pacjent) - sizeof(long), 0) != -1)
-    {
+
+    // Weryfikacja czy pacjent nadal żyje
+    if (kill(pacjent.pacjent_pid, 0) == -1 && errno == ESRCH) {
+        zapisz_raport(KONSOLA, semid, "[ Rejestracja %d ] Brak informacji o pacjencie %d (exit), Anuluje wysylanie wiadomosci\n",
+                     nr_okienka, pacjent.pacjent_pid);
+        continue; 
+    }
+
+    // Wysyłanie z IPC_NOWAIT - przy pełnej kolejce pacjent trafia do bufora
+    if(msgsnd(msgid_we, &pacjent, rozmiar_pojedynczej_wiadomosci, IPC_NOWAIT) != -1) {
         if(!koniec_pracy) {
-            zapisz_raport(KONSOLA, semid, "[Rejestracja %d] Pacjent %d -> POZ\n", 
-                         nr_okienka, pacjent.pacjent_pid);
+            zapisz_raport(KONSOLA, semid, "[ Rejestracja %d ] Pacjent %d -> POZ\n", nr_okienka, pacjent.pacjent_pid);
         }
-    }        
+    } 
+    else if (errno == EAGAIN) {
+        if (bufor_licznik < bufor_pojemnosc) {
+            bufor_oczekujacych[bufor_licznik++] = pacjent;
+            zapisz_raport(KONSOLA, semid, "[ Rejestracja %d ] KOLEJKA FULL Pacjent %d -> BUFOR (%d/%d).\n", 
+                         nr_okienka, pacjent.pacjent_pid, bufor_licznik, bufor_pojemnosc);
+        } else {
+            zapisz_raport(KONSOLA, semid, "[CRITICAL] BUFOR PRZEPELNIONY! Pacjent %d porzucony.\n", pacjent.pacjent_pid);
+        }
+    }       
 }
+if (bufor_oczekujacych) free(bufor_oczekujacych);
 ```
 
 Flaga `IPC_NOWAIT` w `msgrcv()` sprawia, że proces nie blokuje się gdy kolejka jest pusta – zamiast tego zwraca błąd `ENOMSG`, co pozwala na responsywne sprawdzanie flagi `koniec_pracy`.
@@ -420,31 +466,40 @@ msg_creat(7, ID_KOL_PEDIATRA);         // 'D'
 
 #### D.3. Przepływ komunikatów i cykl priorytetów
 
-Komunikat pacjenta przechodzi przez system zgodnie ze schematem:
+Komunikat pacjenta przechodzi przez system w następujący sposób:
 
 ```
 PACJENT -> REJESTRACJA -> PACJENT -> POZ -> PACJENT -> SPECJALISTA -> PACJENT
 ```
 
-Na każdym etapie `mtype` jest odpowiednio modyfikowany:
+Na każdym etapie `mtype` jest odpowiednio modyfikowany. Dorosły pacjent wykonuje operacje IPC samodzielnie za pomocą funkcji `wykonaj_ipc_samodzielnie()`, natomiast dziecko deleguje je do wątku opiekuna (szczegóły w późniejszej sekcji):
 
 ```c
-// pacjent.c - wysyłanie do rejestracji
+// pacjent.c - uniwersalna funkcja IPC dla dorosłych pacjentów
+void wykonaj_ipc_samodzielnie(int qid, int limit_id, KomunikatPacjenta *msg) {
+    lock_limit(limit_id);
+    while (msgsnd(qid, msg, sizeof(KomunikatPacjenta)-sizeof(long), 0) == -1) if(errno!=EINTR) break;   
+    while (msgrcv(qid, msg, sizeof(KomunikatPacjenta)-sizeof(long), msg->pacjent_pid, 0) == -1) if(errno!=EINTR) break;
+    unlock_limit(limit_id);
+}
+```
+
+Funkcja ta opakowuje pełen cykl komunikacji: zajęcie semafora limitującego, wysłanie wiadomości, oczekiwanie na odpowiedź adresowaną po PID, zwolnienie semafora. Dzięki temu logika IPC jest zunifikowana i nie powtarza się w kodzie dla każdego etapu wizyty.
+
+```c
+// pacjent.c - sekwencja komunikacji dorosłego pacjenta
 msg.mtype = vip ? TYP_VIP : TYP_ZWYKLY;  // 1 lub 2
-// ...
-msgsnd(rej_msgid, &msg, sizeof(msg)-sizeof(long), 0);
-msgrcv(rej_msgid, &msg, sizeof(msg)-sizeof(long), mpid, 0);  // Czeka na swój PID
+wykonaj_ipc_samodzielnie(rej_msgid, SLIMIT_REJESTRACJA, &msg);
 
-// Po rejestracji - wysyłanie do POZ
 msg.mtype = 1;  // POZ nie rozróżnia priorytetów
-msgsnd(poz_id, &msg, sizeof(msg)-sizeof(long), 0);
-msgrcv(poz_id, &msg, sizeof(msg)-sizeof(long), mpid, 0);
+wykonaj_ipc_samodzielnie(poz_id, SLIMIT_POZ, &msg);
 
-// Po triażu - wysyłanie do specjalisty
 if (msg.typ_lekarza > 0) {
+    int spec_id = msg.typ_lekarza;
+    int qid = msgget(ftok(FILE_KEY, (spec_id==1?'K':spec_id==2?'N':spec_id==3?'L':
+                                     spec_id==4?'C':spec_id==5?'O':'D')), 0);
     msg.mtype = msg.kolor;  // 1=czerwony (najwyższy), 2=żółty, 3=zielony
-    msgsnd(qid, &msg, sizeof(msg)-sizeof(long), 0);
-    msgrcv(qid, &msg, sizeof(msg)-sizeof(long), mpid, 0);
+    wykonaj_ipc_samodzielnie(qid, spec_id + 1, &msg);
 }
 ```
 
@@ -481,12 +536,6 @@ void unlock_limit(int sem_indeks) {
     struct sembuf operacja = {sem_indeks, 1, SEM_UNDO};
     semop(semid_limits, &operacja, 1);
 }
-
-// Użycie przy komunikacji z rejestracją:
-lock_limit(SLIMIT_REJESTRACJA);
-msgsnd(rej_msgid, &msg, sizeof(msg)-sizeof(long), 0);
-msgrcv(rej_msgid, &msg, sizeof(msg)-sizeof(long), mpid, 0);
-unlock_limit(SLIMIT_REJESTRACJA);
 ```
 
 Semafor jest zwalniany dopiero po odebraniu odpowiedzi od lekarza, co gwarantuje, że w każdej kolejce nigdy nie będzie więcej niż `INT_LIMIT_KOLEJEK`  oczekujących komunikatów.
@@ -503,7 +552,7 @@ Typ lekarza jest przekazywany jako argument przy uruchomieniu procesu:
 
 ```c
 // main.c - uruchamianie lekarzy
-pid_poz = uruchom_proces("./lekarz", "lekarz", "0");  // POZ
+pid_poz = uruchom_proces("./lekarz", "SOR_POZ", "0");  // POZ
 for(int i=1; i<=6; i++) {
     char buff[5]; sprintf(buff, "%d", i); 
     pid_lekarze[i] = uruchom_proces("./lekarz", nazwy_lek[i], buff);
@@ -524,43 +573,91 @@ else {
 
 #### E.2. Praca lekarza POZ (Triaż)
 
-Lekarz POZ przypisuje pacjentowi kolor triażu i kieruje do odpowiedniego specjalisty:
+Lekarz POZ przypisuje pacjentowi kolor triażu i kieruje do odpowiedniego specjalisty. Analogicznie do rejestracji, POZ posiada mechanizm weryfikacji istnienia pacjenta oraz dynamiczny bufor przepełnienia:
 
 [pętla główna lekarz POZ: lekarz.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/lekarz.c#L25-L54)
 ```c
-// lekarz.c - funkcja praca_poz()
-void praca_poz(int msgid_poz)
+// lekarz.c - inicjalizacja bufora w praca_poz()
+struct msqid_ds stan_kolejki;
+pobierz_stan_kolejki(msgid_poz, &stan_kolejki);
+size_t rozmiar_msg = sizeof(KomunikatPacjenta) - sizeof(long);
+int max_msg_limit = stan_kolejki.msg_qbytes / rozmiar_msg;
+
+KomunikatPacjenta *bufor = (KomunikatPacjenta*)malloc(max_msg_limit * sizeof(KomunikatPacjenta));
+int bufor_licznik = 0;
+int bufor_pojemnosc = max_msg_limit;
+```
+
+```c
+// lekarz.c - funkcja praca_poz() - główna pętla
+while(!koniec_pracy)
 {
-    KomunikatPacjenta pacjent;   
-    while(!koniec_pracy)
+    // Opróżnianie bufora gdy kolejka ma wolne miejsce
+    if (bufor_licznik > 0) {
+        pobierz_stan_kolejki(msgid_poz, &stan_kolejki);
+        if (stan_kolejki.msg_qnum < max_msg_limit) {
+            for (int i = 0; i < bufor_licznik; i++) {
+                if (msgsnd(msgid_poz, &bufor[i], rozmiar_msg, IPC_NOWAIT) != -1) {
+                    zapisz_raport(KONSOLA, semid, "[POZ] Wznowiono pacjenta z bufora: %d\n", bufor[i].pacjent_pid);
+                    for(int j=i; j<bufor_licznik-1; j++) bufor[j] = bufor[j+1];
+                    bufor_licznik--;
+                    i--;
+                } else {
+                    if (errno == EAGAIN) break; 
+                }
+            }
+        }
+    }
+
+    if(msgrcv(msgid_poz, &pacjent, rozmiar_msg, -1, IPC_NOWAIT) == -1) 
     {
-        if(msgrcv(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0, IPC_NOWAIT) == -1) {
-            if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; }
-            break;
-        } 
-        
-        // Losowanie koloru zgodnie z rozkładem statystycznym
-        int r = rand() % 100;
-        if (r < 10) pacjent.kolor = CZERWONY;       // 10%
-        else if (r < 45) pacjent.kolor = ZOLTY;     // 35%
-        else if (r < 95) pacjent.kolor = ZIELONY;   // 50%
-        else {
-            // 5% - odesłanie do domu
-            pacjent.typ_lekarza = 0;
-            pacjent.skierowanie = 1;
-            pacjent.kolor = 0;
-        }
+        if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; } 
+        break;
+    } 
+    
+    // Losowanie koloru zgodnie z rozkładem statystycznym
+    int r = rand() % 1000;
+    if (r < 100) pacjent.kolor = CZERWONY;       // 10%
+    else if (r < 450) pacjent.kolor = ZOLTY;     // 35%
+    else if (r < 950) pacjent.kolor = ZIELONY;   // 50%
+    else {
+        // 5% - odesłanie do domu
+        pacjent.typ_lekarza = 0;
+        pacjent.skierowanie = 1;
+        pacjent.kolor = 0;
+    }
 
-        // Przypisanie specjalisty
-        if (pacjent.kolor != 0) {
-            if (pacjent.wiek < 18) pacjent.typ_lekarza = LEK_PEDIATRA;  // Dzieci do pediatry
-            else pacjent.typ_lekarza = (rand() % 5) + 1;  // Dorośli losowo 1-5
-        }
+    // Przypisanie specjalisty
+    if (pacjent.kolor) {
+        if (pacjent.wiek < 18) pacjent.typ_lekarza = LEK_PEDIATRA;  // Dzieci do pediatry
+        else pacjent.typ_lekarza = (rand() % 5) + 1;  // Dorośli losowo 1-5
+    }
 
-        pacjent.mtype = pacjent.pacjent_pid;
-        msgsnd(msgid_poz, &pacjent, sizeof(pacjent) - sizeof(long), 0);
+    pacjent.mtype = pacjent.pacjent_pid;
+    if(koniec_pracy) break;
+
+    // Weryfikacja czy pacjent nadal żyje
+    if (kill(pacjent.pacjent_pid, 0) == -1 && errno == ESRCH) {
+        zapisz_raport(KONSOLA, semid, "[ POZ ] Brak informacji o pacjencie %d (exit), Anuluje wysylanie wiadomosci\n", 
+                     pacjent.pacjent_pid);
+        continue;
+    }
+
+    // Wysyłanie z IPC_NOWAIT - przy pełnej kolejce pacjent trafia do bufora
+    if (msgsnd(msgid_poz, &pacjent, rozmiar_msg, IPC_NOWAIT) == -1) {
+        if (errno == EAGAIN) {
+            if (bufor_licznik < bufor_pojemnosc) {
+                bufor[bufor_licznik++] = pacjent;
+                zapisz_raport(KONSOLA, semid, "[POZ] KOLEJKA PELNA! Pacjent %d -> BUFOR (%d/%d)\n", 
+                             pacjent.pacjent_pid, bufor_licznik, bufor_pojemnosc);
+            } else {
+                zapisz_raport(KONSOLA, semid, "[POZ] CRITICAL: Bufor przepelniony. Pacjent %d porzucony.\n", 
+                             pacjent.pacjent_pid);
+            }
+        }
     }
 }
+free(bufor);
 ```
 
 **Własna interpretacja:** Przy odesłaniu pacjenta przez POZ do domu nadajemy kolor 0 - niezdefiniowany. Uznaję tym samym, że pacjent kończy tutaj swoje badania i zwyczajnie
@@ -569,24 +666,52 @@ w jego przypadku priorytet jest nieistotny (zdrowy).
 
 #### E.3. Praca lekarza specjalisty
 
-Specjalista podejmuje końcową decyzję o dalszym postępowaniu:
+Specjalista podejmuje końcową decyzję o dalszym postępowaniu. Identycznie jak POZ i rejestracja, specjalista posiada mechanizm weryfikacji istnienia pacjenta (`kill(pid, 0)`) oraz dynamiczny bufor przepełnienia:
 
 [pętla główna lekarza specjalisty: lekarz.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/lekarz.c#L66-L101)
 
 ```c
-// lekarz.c - funkcja praca_specjalista()
+// lekarz.c - funkcja praca_specjalista() z buforem i weryfikacją
 void praca_specjalista(int typ, int msgid)
 {
     StanSOR *stan = (StanSOR*)shmat(shmid, NULL, 0);
     // ...
     
+    // Inicjalizacja bufora na podstawie pojemności kolejki
+    struct msqid_ds stan_kolejki;
+    pobierz_stan_kolejki(msgid, &stan_kolejki);
+    size_t rozmiar_msg = sizeof(KomunikatPacjenta) - sizeof(long);
+    int max_msg_limit = stan_kolejki.msg_qbytes / rozmiar_msg;
+    
+    KomunikatPacjenta *bufor = (KomunikatPacjenta*)malloc(max_msg_limit * sizeof(KomunikatPacjenta));
+    int bufor_licznik = 0;
+    int bufor_pojemnosc = max_msg_limit;
+
     while(!koniec_pracy)
     {
         // Obsługa wezwania na oddział (szczegóły w sekcji F)
         if(wezwanie_na_oddzial) { /* ... */ }
 
+        // Opróżnianie bufora gdy kolejka ma wolne miejsce
+        if (bufor_licznik > 0) {
+            pobierz_stan_kolejki(msgid, &stan_kolejki);
+            if (stan_kolejki.msg_qnum < max_msg_limit) {
+                for (int i = 0; i < bufor_licznik; i++) {
+                    if (msgsnd(msgid, &bufor[i], rozmiar_msg, IPC_NOWAIT) != -1) {
+                        zapisz_raport(KONSOLA, semid, "[%s] Wznowiono z bufora: %d\n", 
+                                     int_to_lekarz(typ), bufor[i].pacjent_pid);
+                        for(int j=i; j<bufor_licznik-1; j++) bufor[j] = bufor[j+1];
+                        bufor_licznik--;
+                        i--;
+                    } else {
+                        if (errno == EAGAIN) break;
+                    }
+                }
+            }
+        }
+
         // Odbiór pacjenta z priorytetem
-        if(msgrcv(msgid, &pacjent, sizeof(pacjent) - sizeof(long), -3, IPC_NOWAIT) == -1) {
+        if(msgrcv(msgid, &pacjent, rozmiar_msg, -3, IPC_NOWAIT) == -1) {
             if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; }
             break;            
         }
@@ -598,11 +723,45 @@ void praca_specjalista(int typ, int msgid)
         else pacjent.skierowanie = 3;               // 0.5% - inna placówka
 
         pacjent.mtype = pacjent.pacjent_pid;
-        msgsnd(msgid, &pacjent, sizeof(pacjent) - sizeof(long), 0);
+
+        // Weryfikacja czy pacjent nadal żyje
+        if (kill(pacjent.pacjent_pid, 0) == -1 && errno == ESRCH) {
+            zapisz_raport(KONSOLA, semid, "[ %s ] Brak informacji o pacjencie %d. Anuluje wiadomość zwrotną\n", 
+                         int_to_lekarz(typ), pacjent.pacjent_pid);
+            continue;
+        }
+
+        // Wysyłanie z IPC_NOWAIT - przy pełnej kolejce pacjent trafia do bufora
+        if (msgsnd(msgid, &pacjent, rozmiar_msg, IPC_NOWAIT) == -1) {
+             if (errno == EAGAIN) {
+                if (bufor_licznik < bufor_pojemnosc) {
+                    bufor[bufor_licznik++] = pacjent;
+                    zapisz_raport(KONSOLA, semid, "[%s] KOLEJKA PELNA! Pacjent %d -> BUFOR (%d/%d)\n", 
+                                 int_to_lekarz(typ), pacjent.pacjent_pid, bufor_licznik, bufor_pojemnosc);
+                } else {
+                    zapisz_raport(KONSOLA, semid, "[%s] CRITICAL: Bufor przepelniony. Pacjent %d porzucony.\n", 
+                                 int_to_lekarz(typ), pacjent.pacjent_pid);
+                }
+            }
+        }
     }
+    
+    free(bufor);
     shmdt(stan);
 }
 ```
+
+**Podsumowanie mechanizmów bezpieczeństwa w procesach SOR (rejestracja, POZ, specjaliści):**
+
+Wszystkie trzy typy procesów obsługujących pacjentów implementują identyczny wzorzec ochronny:
+
+1. **`kill(pacjent_pid, 0)` przed `msgsnd()`** – sprawdzenie czy proces pacjenta istnieje. Eliminuje wysyłanie odpowiedzi do martwych procesów, co zapobiegałoby zapychaniu kolejki wiadomościami, których nikt nie odbierze.
+
+2. **`IPC_NOWAIT` na `msgsnd()`** – nieblokujące wysyłanie. Gdy kolejka jest pełna, proces nie zawiesza się lecz otrzymuje `EAGAIN`, co pozwala na dalsze działanie.
+
+3. **Dynamiczny bufor (`malloc` na starcie)** – przy `EAGAIN` komunikat trafia do bufora w pamięci procesu. Na początku każdej iteracji pętli bufor jest opróżniany do kolejki gdy ta ma wolne miejsce (weryfikowane przez `msgctl(IPC_STAT)`).
+
+4. **`pobierz_stan_kolejki()` (`msgctl IPC_STAT`)** – odczytanie `msg_qnum` (aktualnej liczby wiadomości) pozwala podejmować inteligentne decyzje o próbach odesłania zbuforowanych komunikatów.
 
 ---
 
@@ -644,11 +803,8 @@ if(wezwanie_na_oddzial) {
     
     zapisz_raport(KONSOLA, semid, "[%s] Wezwanie na oddzial\n", int_to_lekarz(typ));
     
-    // Symulacja pobytu na oddziale (3 sekundy z możliwością przerwania)
-    for(int i=0; i<30; i++) {
-        if(koniec_pracy) break;
-        usleep(100000);  // 100ms
-    }
+    // Symulacja pobytu na oddziale
+    sleep(10);
 
     // Powrót do pracy
     while(semop(semid, &lock, 1) == -1) { if(errno!=EINTR) break; }
@@ -658,8 +814,6 @@ if(wezwanie_na_oddzial) {
     wezwanie_na_oddzial = 0;
 }
 ```
-
-Pobyt na oddziale jest realizowany jako seria krótkich `usleep()` zamiast jednego długiego `sleep()`, co pozwala na szybką reakcję na sygnał zakończenia pracy.
 
 Możemy na bieżąco monitorować dyżurujących specjalistów w  *spec_na_oddziale.txt*
 
@@ -674,6 +828,7 @@ Dyrektor jest uruchamiany gdy program `main` otrzyma argument `auto`:
 if (argc > 1 && strcmp(argv[1], "auto") == 0) {
     pid_dyrektor = fork();
     if (pid_dyrektor == 0) {
+        sleep(1);
         signal(SIGINT, SIG_IGN);   // Ignorowanie SIGINT
         signal(SIGTERM, SIG_IGN);  // Ignorowanie SIGTERM
         
@@ -815,13 +970,6 @@ Snapshot umożliwia późniejszą weryfikację, czy liczba ewakuowanych pacjent�
 ```c
 // pacjent.c - handler
 void handle_kill(int sig) {
-    // Zakończenie wątku opiekuna
-    if (potrzebny_rodzic && rodzic_utworzony) {
-        pthread_cancel(rodzic_thread);
-        pthread_join(rodzic_thread, NULL);
-    }
-    
-    // Zwrot kodu wyjścia dla weryfikacji
     if (stan_pacjenta == STAN_W_POCZEKALNI) {
         _exit(sem_op_miejsca);  // 1 lub 2 (z opiekunem)
     }
@@ -935,71 +1083,207 @@ Flaga `volatile int monitor_running` kontroluje pętle główne wszystkich wątk
 
 ---
 
-### I. Wątki w procesie pacjenta (symulacja opiekuna)
+### I. Wątek opiekuna w procesie pacjenta (model zleceniowy)
 
-#### I.1. Tworzenie wątku opiekuna dla nieletnich
+Zgodnie z wymaganiami projektu, dzieci poniżej 18 lat przychodzą na SOR pod opieką osoby dorosłej. Opiekun jest realizowany jako wątek POSIX w procesie pacjenta. Zamiast pasywnego oczekiwania, opiekun działa w modelu zleceniowym – wątek główny (dziecko) deleguje opiekunowi konkretne zadania IPC, a opiekun je wykonuje i raportuje zakończenie.
 
-[watek rodzic: pacjent.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/pacjent.c#L98-L108)
+#### I.1. Blok sterujący opiekuna (OpiekunControlBlock)
+
+Synchronizacja między wątkiem dziecka a wątkiem opiekuna opiera się na dedykowanej strukturze z mutexem i zmiennymi warunkowymi:
 
 ```c
-// pacjent.c - tworzenie opiekuna
-int wiek = rand() % 100;
+// pacjent.c - typy zadań i blok sterujący
+typedef enum {
+    BRAK_ZADAN,
+    ZADANIE_WEJDZ_SEM,     // Zajmij 1 miejsce w poczekalni (semafor)
+    ZADANIE_WYJDZ_SEM,     // Zwolnij 1 miejsce w poczekalni
+    ZADANIE_REJESTRACJA,   // Wykonaj komunikację z rejestracją
+    ZADANIE_POZ,           // Wykonaj komunikację z POZ
+    ZADANIE_SPECJALISTA,   // Wykonaj komunikację ze specjalistą
+    ZADANIE_KONIEC         // Zakończ wątek
+} TypZadania;
 
-if (wiek < 18) {
-    potrzebny_rodzic = 1;
-    sem_op_miejsca = 2;  // Zajmuje 2 miejsca w poczekalni
-    pthread_create(&rodzic_thread, NULL, watek_rodzic, NULL);
-    rodzic_utworzony = 1;
-    zapisz_raport(KONSOLA, semid, "[Pacjent %d] Utworzono (Wiek: %d, VIP: %d, Opiekun TID: %lu)\n", 
-                  mpid, wiek, vip, (unsigned long)rodzic_thread);
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond_start;   // Opiekun czeka na nowe zadanie
+    pthread_cond_t cond_koniec;  // Dziecko czeka na zakończenie zadania
+    TypZadania aktualne_zadanie;
+    KomunikatPacjenta dane_pacjenta;  // Współdzielone dane komunikatu
+} OpiekunControlBlock;
+
+OpiekunControlBlock OpiekunSync;
+```
+
+Struktura `OpiekunControlBlock` realizuje wzorzec producent-konsument: dziecko (producent) ustawia zadanie i sygnalizuje `cond_start`, opiekun (konsument) wykonuje zadanie i sygnalizuje `cond_koniec`.
+
+#### I.2. Funkcja zlecająca zadanie opiekunowi
+
+```c
+// pacjent.c - zlecanie zadania opiekunowi
+void zlec_opiekunowi(TypZadania zadanie) {
+    pthread_mutex_lock(&OpiekunSync.mutex);
+    OpiekunSync.aktualne_zadanie = zadanie;
+    pthread_cond_signal(&OpiekunSync.cond_start);
+    while (OpiekunSync.aktualne_zadanie != BRAK_ZADAN) {
+        pthread_cond_wait(&OpiekunSync.cond_koniec, &OpiekunSync.mutex);
+    }
+    pthread_mutex_unlock(&OpiekunSync.mutex);
 }
 ```
 
-#### I.2. Funkcja wątku opiekuna 
+Funkcja jest blokująca – dziecko czeka (`cond_wait`) dopóki opiekun nie ustawi `aktualne_zadanie` z powrotem na `BRAK_ZADAN`, co oznacza wykonanie zlecenia.
 
-[funkcja watku rodzica](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/pacjent.c#L63-L66)
+#### I.3. Funkcja wątku opiekuna
+
+[watek opiekun: pacjent.c](https://github.com/utratav/SO_SOR/blob/c8652d99de38b705092039fcc68566cfc2ebc569/pacjent.c#L98-L108)
 
 ```c
-// pacjent.c - wątek opiekuna
-void* watek_rodzic(void* arg) {
-    while(1) { 
-        sleep(1); 
-        pthread_testcancel();  // Punkt anulowania
+// pacjent.c - pętla główna wątku opiekuna
+void* watek_opiekun(void* arg) {
+    pid_t mpid = getpid();
+    pthread_mutex_lock(&OpiekunSync.mutex);
+    while (1) {
+        while (OpiekunSync.aktualne_zadanie == BRAK_ZADAN) 
+            pthread_cond_wait(&OpiekunSync.cond_start, &OpiekunSync.mutex);
+        if (OpiekunSync.aktualne_zadanie == ZADANIE_KONIEC) break;
+
+        pthread_mutex_unlock(&OpiekunSync.mutex); 
+        
+        KomunikatPacjenta *msg = &OpiekunSync.dane_pacjenta;
+        struct sembuf operacja_sem = {SEM_MIEJSCA_SOR, 0, SEM_UNDO}; 
+        
+        switch (OpiekunSync.aktualne_zadanie) {
+            case ZADANIE_WEJDZ_SEM:
+                operacja_sem.sem_op = -1;
+                while (semop(semid, &operacja_sem, 1) == -1) if(errno!=EINTR) exit(104);
+                aktualizuj_liczniki(-1, 1, 0); 
+                break;
+            case ZADANIE_WYJDZ_SEM:
+                operacja_sem.sem_op = 1;
+                semop(semid, &operacja_sem, 1);
+                aktualizuj_liczniki(0, -1, 0);
+                break;
+            case ZADANIE_REJESTRACJA:
+                wykonaj_ipc_samodzielnie(rej_msgid, SLIMIT_REJESTRACJA, msg);
+                break;
+            case ZADANIE_POZ:
+                msg->mtype = 1;
+                wykonaj_ipc_samodzielnie(poz_id, SLIMIT_POZ, msg);
+                break;
+            case ZADANIE_SPECJALISTA:
+                if (msg->typ_lekarza > 0) {
+                    int spec_id = msg->typ_lekarza;
+                    int qid = msgget(ftok(FILE_KEY, (spec_id==1?'K':spec_id==2?'N':spec_id==3?'L':
+                                                     spec_id==4?'C':spec_id==5?'O':'D')), 0);
+                    msg->mtype = msg->kolor;
+                    wykonaj_ipc_samodzielnie(qid, spec_id + 1, msg);
+                }
+                break;
+            default: break;
+        }
+
+        pthread_mutex_lock(&OpiekunSync.mutex);
+        OpiekunSync.aktualne_zadanie = BRAK_ZADAN;
+        pthread_cond_signal(&OpiekunSync.cond_koniec);
     }
+    pthread_mutex_unlock(&OpiekunSync.mutex);
     return NULL;
 }
 ```
 
-Wątek jest pasywny - jego jedynym zadaniem jest reprezentowanie obecności opiekuna. `pthread_testcancel()` umożliwia bezpieczne przerwanie wątku przez `pthread_cancel()`.
+Opiekun wykorzystuje tę samą funkcję `wykonaj_ipc_samodzielnie()` co dorosły pacjent, dzięki czemu logika komunikacji IPC jest współdzielona. Kluczowa różnica polega na tym, że opiekun operuje na wskaźniku do `OpiekunSync.dane_pacjenta` – współdzielonego bufora komunikatu, przez który dziecko i opiekun wymieniają się danymi.
 
-#### I.3. Zajmowanie podwójnego miejsca w poczekalni
+Wątek opiekuna wykonuje operacje na semaforze z flagą `SEM_UNDO` – oznacza to, że przy awaryjnym zakończeniu procesu, zarówno miejsce dziecka jak i opiekuna zostaną zwolnione niezależnie.
+
+#### I.4. Tworzenie wątku opiekuna i zajmowanie podwójnego miejsca
 
 ```c
-// pacjent.c - wejście do poczekalni
-struct sembuf wejscie = {SEM_MIEJSCA_SOR, -sem_op_miejsca, SEM_UNDO};
-while (semop(semid, &wejscie, 1) == -1) { 
-    if (errno == EINTR) continue; 
-    exit(1); 
+// pacjent.c - inicjalizacja opiekuna dla nieletnich
+int wiek = rand() % 100;
+
+if (wiek < 18) {
+    RODZIC_POTRZEBNY = 1;
+    sem_op_miejsca = 2;  // Dziecko + opiekun = 2 miejsca w poczekalni
+    pthread_mutex_init(&OpiekunSync.mutex, NULL);
+    pthread_cond_init(&OpiekunSync.cond_start, NULL);
+    pthread_cond_init(&OpiekunSync.cond_koniec, NULL);
+    OpiekunSync.aktualne_zadanie = BRAK_ZADAN;
+    pthread_create(&rodzic_thread, NULL, watek_opiekun, NULL);
+    
+    zapisz_raport(KONSOLA, semid, "[PACJENT %d ] WIEK %d |Z DOROSLYM %lu |\n", 
+                  mpid, wiek, (unsigned long)rodzic_thread);
+} else {
+    sem_op_miejsca = 1;
+    zapisz_raport(KONSOLA, semid, "[PACJENT  %d ] WIEK %d \n", mpid, wiek);
 }
 ```
-O tym już była mowa przy okazji _exit() przez pacjenta podczas ewakuacji.
 
 Zmienna `sem_op_miejsca` przyjmuje wartość 1 dla dorosłych lub 2 dla nieletnich z opiekunem.
 
-#### I.4. Kończenie wątku opiekuna
+#### I.5. Przebieg wizyty dziecka – delegacja do opiekuna
+
+Dziecko (wątek główny) zajmuje jedno miejsce w poczekalni bezpośrednio, a drugie miejsce zleca opiekunowi. Następnie każdy etap komunikacji IPC (rejestracja, POZ, specjalista) jest delegowany do opiekuna przez `zlec_opiekunowi()`:
+
+```c
+// pacjent.c - sekwencja wizyty dziecka z opiekunem
+aktualizuj_liczniki(sem_op_miejsca, 0, 0);  // +2 przed SOR
+
+// Opiekun zajmuje swoje 1 miejsce
+zlec_opiekunowi(ZADANIE_WEJDZ_SEM);
+
+// Dziecko zajmuje swoje 1 miejsce
+struct sembuf wejscie = {SEM_MIEJSCA_SOR, -1, SEM_UNDO};
+while (semop(semid, &wejscie, 1) == -1) { if (errno == EINTR) continue; exit(104); }
+
+aktualizuj_liczniki(-1, 1, 1);
+stan_pacjenta = STAN_W_POCZEKALNI;
+
+// Rejestracja - delegacja do opiekuna
+OpiekunSync.dane_pacjenta = msg;
+zlec_opiekunowi(ZADANIE_REJESTRACJA);
+msg = OpiekunSync.dane_pacjenta;
+
+aktualizuj_liczniki(0, 0, -1);
+
+// POZ - delegacja do opiekuna
+OpiekunSync.dane_pacjenta = msg;
+zlec_opiekunowi(ZADANIE_POZ);
+msg = OpiekunSync.dane_pacjenta;
+
+// Specjalista - delegacja do opiekuna
+if (msg.typ_lekarza > 0) {
+    OpiekunSync.dane_pacjenta = msg;
+    zlec_opiekunowi(ZADANIE_SPECJALISTA);
+    msg = OpiekunSync.dane_pacjenta;
+}
+```
+
+Po każdym zleceniu dziecko odczytuje zaktualizowane dane z `OpiekunSync.dane_pacjenta` – opiekun mógł np. zmienić pole `kolor` (po triażu) czy `skierowanie` (po specjaliście).
+
+#### I.6. Kończenie wątku opiekuna
 
 ```c
 // pacjent.c - zakończenie normalne
-if (potrzebny_rodzic && rodzic_utworzony) {
-    pthread_cancel(rodzic_thread);
+if (RODZIC_POTRZEBNY) 
+{
+    // Zwolnienie miejsca opiekuna w poczekalni
+    zlec_opiekunowi(ZADANIE_WYJDZ_SEM);
+    
+    // Zakończenie wątku opiekuna
+    pthread_mutex_lock(&OpiekunSync.mutex);
+    OpiekunSync.aktualne_zadanie = ZADANIE_KONIEC;
+    pthread_cond_signal(&OpiekunSync.cond_start);
+    pthread_mutex_unlock(&OpiekunSync.mutex);
     pthread_join(rodzic_thread, NULL);
 }
 
-struct sembuf wyjscie = {SEM_MIEJSCA_SOR, sem_op_miejsca, SEM_UNDO};
+// Dziecko zwalnia swoje miejsce
+struct sembuf wyjscie = {SEM_MIEJSCA_SOR, 1, SEM_UNDO};
 semop(semid, &wyjscie, 1);
+aktualizuj_liczniki(0, -1, 0);
 ```
 
-`pthread_cancel()` wysyła żądanie anulowania, a `pthread_join()` czeka na faktyczne zakończenie wątku i zwalnia jego zasoby.
+Zadanie `ZADANIE_KONIEC` powoduje wyjście opiekuna z pętli głównej. `pthread_join()` czeka na faktyczne zakończenie wątku i zwalnia jego zasoby.
 
 ---
 
@@ -1487,22 +1771,3 @@ System utrzymuje drugie okienko otwarte mimo spadku poniżej progu otwarcia 400,
   Przyznanie wieku mogłoby się odbywać z poziomu fork() i exec() w generatorze - przekazywalibyśmy wiek jako argument (przy odpowiedniej konwersji na stringa) oraz przypisywali atoi(argv[1]) do wieku. Jednak co z pacjentami, którzy nie uaktualnili StanSOR - przed_poczekalnia++.
   Użycie semctl z GETNCNT również nie rozwiąże problemu, gdyż ten traktuje rodzica z dzieckiem jako pojedynczy proces. To samo się tyczy logiki semctl i GETVAL na semaforze generatora w połączeniu z GETVAL semafora poczekalni - znowu różnica zwróci nam jedynie liczbę procesów
   (bez rozróżnienia na dorosły / dziecko z opiekunem)
-
-
-
-
-
-
-
-
-
-  
-
-
-
-
-
-
-
-
-          
