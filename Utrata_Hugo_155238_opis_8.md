@@ -1367,9 +1367,9 @@ make clean
 make ipc_clean
 ```
 
-### T1
 
-## Czy Użycie semafora pred kolejką komunikatów skutecznie uniemożliwia zapchanie kolejki i w konsekwencji chroni przed deadlockiem?
+
+## T1: Czy Użycie semafora pred kolejką komunikatów skutecznie uniemożliwia zapchanie kolejki i w konsekwencji chroni przed deadlockiem?
 
 Będe używał stwierdzenia procesy SOR - chodzi mi o rejestracje, POZ, specjalistów - implementacja komunikacji pomiędzy pacjentem, a każdym procesem SOR jest taka sama.
 
@@ -1434,6 +1434,108 @@ Proces SOR zobaczy, że pierwsze 3 pacjentów już nie istnieje - skutecznie opr
 
 **Podgląd w IPCS:**
 * <img width="466" height="162" alt="Zrzut ekranu 2026-02-05 040438" src="https://github.com/user-attachments/assets/a5eebcf2-1a58-4cc8-9765-0e472a7e9b7a" />
+
+
+
+
+
+
+## T2: Użycie sygnału SIG_LEKARZ_ODDZIAŁ na wszystkich specjalistach równocześnie
+
+**Modyfikacje:**
+* Przed rozpoczęciem pętli głownej - każdy specjalisty robi:
+```c
+raise(SIG_LEKARZ_ODDZIAL);
+
+    while(!koniec_pracy)
+    {
+        ...
+    }
+```
+
+* analogicznym byłoby użycie komendy: pkill -SIGUSR2 -f SOR_S_
+  
+* na potrzeby testu lekarz specjalista śpi dokładnie 10 sekund
+  
+
+**Przebieg testu:**
+
+* Stan przed:
+* <img width="218" height="164" alt="Zrzut ekranu 2026-02-05 201251" src="https://github.com/user-attachments/assets/34cf8e6d-87f8-42fb-83cf-3b96747eaf52" />
+
+* Stan w trakcie sleepa lekarzy:
+* <img width="472" height="563" alt="Zrzut ekranu 2026-02-05 201322" src="https://github.com/user-attachments/assets/2a85a6a9-78ca-423f-9de2-fb2cc2f23a28" />
+
+* W tym momencie ostatnia kolejka: pacjent -> main jest mocno przeciążona - w pewnym momencie każdy pacjent już skończył swój cykl i nie będziemy dostawać logów na konsoli - jest to OK.
+* <img width="904" height="341" alt="Zrzut ekranu 2026-02-05 201601" src="https://github.com/user-attachments/assets/d18d5626-032d-4d65-b5fe-2eac9fc09070" />
+
+* Po ok. minucie program kończy się sukcesem - kolejki zostały usunięte
+* <img width="942" height="572" alt="Zrzut ekranu 2026-02-05 201738" src="https://github.com/user-attachments/assets/237ee688-d66d-41e0-95cd-5542a6121d40" />
+
+
+
+
+## T3: (Poprawiony test) SIGTSTP, SIGCONT i działanie kolejki
+
+
+**Przebieg:**
+
+* W lekarz POZ robimy sleep(5); - chcemy zebrac jak najwięcej wiadomości od pacjentów
+  
+* wykonujemy CTRL + Z (SIGTSTP) do wszystkich procesów
+  
+* <img width="887" height="578" alt="Zrzut ekranu 2026-02-05 223708" src="https://github.com/user-attachments/assets/b4f55c2b-d0bc-4fee-a763-771f5dcbeb3a" />
+
+* wykonujemy SIGCONT na samym lekarzu POZ
+  
+* POZ się budzi i i wykona 500 razy pętle msgrcv msgsnd po czym się zatrzyma
+  
+* <img width="884" height="577" alt="Zrzut ekranu 2026-02-05 223755" src="https://github.com/user-attachments/assets/70e649e1-7f96-4322-a842-2aa9fd351137" />
+
+* Liczba wiadomośći nadal wynosi 500 - ale są to wiadomości do odebrania przez pacjentów
+  
+* Po wypisaniu 500 logów konsola stoi - dopóki nie wznowimy wszystkich procesów przez SIGCONT
+
+
+**Co poszło nie tak w poprzednim teście?**
+
+**Poprzednia implementacja:**
+```c
+        if(msgrcv(msgid_poz, &pacjent, rozmiar_msg, 0, IPC_NOWAIT) == -1) 
+        {
+            if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; } 
+            break;
+        }
+```
+
+**Obecna:**
+```c
+        if(msgrcv(msgid_poz, &pacjent, rozmiar_msg, -1, IPC_NOWAIT) == -1) 
+        {
+            if (errno == ENOMSG || errno == EINTR) { usleep(50000); continue; } 
+            break;
+        }
+```
+
+Jak widać zmieniliśmy jedynie argument msgtyp (4) - W projekcie założyliśmy, że lekarz POZ przyjmuje bez priorytetów, potraktowałem to jako "Bierz pierwszą lepszą wiadomość"
+msgtyp = 0 zakłada właśnie taki scenariusz - jednak w przypadku kiedy POZ nie dostaje nowych wiadomości, a stare nie są odbierane przez pacjentów - zaczyna przetwarzać 
+te same wiadomości, które przed chwilą sam wysłał. Skutkiem czego jest niekończoncząca się pętla tych samych 500 pacjentów. Lekcja z tego jest następująca: nawet jeśli nie zależy
+nam na konkretnym priotytecie - wiadomość musi mieć jakis stały mtype dla wszystkich pacjentów oraz po stronie msgrcv musimy ustawić jakikolwiek msgtyp z tego przedziału żeby odróżnić ją od wiadomości zwrotnej
+z mtype = pid_pacjenta. 
+Np. "-1" - msgrcv weźmie najmniejszą liczbę mniejszą niż | -1 |.
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
