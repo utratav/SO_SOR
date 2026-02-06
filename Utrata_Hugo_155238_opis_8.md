@@ -679,7 +679,8 @@ Będe używał stwierdzenia procesy SOR - chodzi mi o rejestracje, POZ, specjali
 
 **Tak wygląda nasza kolejka gdy pierwsze 500 pacjentów obniża semafor i wysyła wiadomośc i załóżmy, że robi sleep(5) - nie robi msgrcv:**
 
-<img width="1126" height="129" alt="image" src="https://github.com/user-attachments/assets/95da7b42-b821-4273-a1bd-5f6075c00a7d" />
+<img width="956" height="103" alt="Zrzut ekranu 2026-02-06 183712" src="https://github.com/user-attachments/assets/4a153568-85e3-42c2-ad20-d0338a2766b7" />
+
 
 Mamy FIFO posortowane według priorytetu, gdzie vip o wartość | -1 | będzie obsłużony szybciej od zwykłego | -2 |
 
@@ -687,7 +688,8 @@ Mamy FIFO posortowane według priorytetu, gdzie vip o wartość | -1 | będzie o
 
 W przypadku wykonania `SEM_UNDO` przez semafor wchodzi kolejne 500 osób, ich wiadomości są wymieszane z tymi, którzy już nie żyją, ALE co najważniejsze - posortowane według priorytetu.
 
-<img width="1510" height="145" alt="image" src="https://github.com/user-attachments/assets/26c6005e-f247-4557-9fb8-be91ce7aa6f8" />
+<img width="995" height="77" alt="Zrzut ekranu 2026-02-06 183721" src="https://github.com/user-attachments/assets/ed80e1bc-efd1-4030-8c43-3b918317b622" />
+
 szary kolor oznacza nieżywych pacjentów*
 
 Proces SOR zobaczy, że pierwsze 3 pacjentów już nie istnieje - skutecznie opróżni kolejke o te (3) wiadomości, jednak następnie trafi na "żywego" vip i się zablokuje bo l. wiadomości nadal jest > 682 (limit).
